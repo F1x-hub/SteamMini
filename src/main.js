@@ -10,6 +10,7 @@ import { createProfilePopup } from './components/profilePopup.js';
 import { initTooltips } from './components/tooltip.js';
 import { initContextMenu } from './components/contextMenu.js';
 import { initInternalBrowser } from './components/internalBrowser.js';
+import { initUpdaterNotification } from './components/updaterNotification.js';
 import { initErrorBoundary } from './utils/errorBoundary.js';
 
 import { renderLibrary } from './pages/library.js';
@@ -139,13 +140,15 @@ async function main() {
     return renderGameDetail(appId);
   });
 
-  if (window.location.pathname === '/' || window.location.pathname === '/index.html') {
-    window.history.replaceState(null, '', '/library');
+  let currentPath = window.location.pathname;
+  if (currentPath === '/' || currentPath.endsWith('index.html')) {
+    currentPath = '/library';
+    window.history.replaceState(null, '', currentPath);
   }
 
   // Initialize router inside mainContent
-  await router.init(mainContent);
-  store.set('currentRoute', window.location.pathname);
+  await router.init(mainContent, currentPath);
+  store.set('currentRoute', currentPath);
   
   if (bar) bar.style.width = '100%';
 
@@ -173,6 +176,7 @@ async function main() {
   initTooltips();
   initContextMenu();
   initInternalBrowser();
+  initUpdaterNotification();
 
   // Global context menu for input fields
   document.addEventListener('contextmenu', (e) => {

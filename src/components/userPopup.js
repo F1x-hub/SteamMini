@@ -52,6 +52,18 @@ export function createUserPopup() {
             <label>Language</label>
             <div id="lang-dropdown-container"></div>
           </div>
+          <div class="input-group row-group">
+            <label>Действие при закрытии (X)</label>
+            <div id="close-dropdown-container"></div>
+          </div>
+          <div class="input-group row-group">
+            <label for="startup-toggle" style="cursor: pointer;">Запускать при старте Windows</label>
+            <input type="checkbox" id="startup-toggle" style="width: 20px; height: 20px; cursor: pointer; margin: 0;" />
+          </div>
+          <div class="input-group row-group" id="startup-minimized-group" style="display: none;">
+            <label for="startup-minimized-toggle" style="cursor: pointer; padding-left: 10px; color: var(--color-text-secondary);">Сворачивать в трей при запуске</label>
+            <input type="checkbox" id="startup-minimized-toggle" style="width: 20px; height: 20px; cursor: pointer; margin: 0;" />
+          </div>
         </section>
 
         <section class="settings-section">
@@ -278,11 +290,27 @@ export function createUserPopup() {
   });
   container.querySelector('#lang-dropdown-container').appendChild(langDropdown);
 
+  const closeDropdown = createDropdown({
+    id: 'close-select',
+    options: [
+      { value: 'prompt', label: 'Спросить' },
+      { value: 'tray', label: 'Свернуть в трей' },
+      { value: 'quit', label: 'Закрыть полностью' }
+    ],
+    selectedValue: 'prompt'
+  });
+  container.querySelector('#close-dropdown-container').appendChild(closeDropdown);
+
   // Bind Events
   const closeBtn = container.querySelector('#popup-close');
   // Close modal logic
   closeBtn.addEventListener('click', () => {
     store.set('settingsOpen', false);
+  });
+  
+  // Startup toggle logic
+  container.querySelector('#startup-toggle').addEventListener('change', (e) => {
+    container.querySelector('#startup-minimized-group').style.display = e.target.checked ? 'flex' : 'none';
   });
   
   container.addEventListener('click', (e) => {
@@ -371,12 +399,32 @@ export function createUserPopup() {
       phase2_stall_timeout: Math.max(10, Math.min(60, parseInt(container.querySelector('#fc-p2-stall').value) || 30)),
     };
 
+    const closeBehavior = closeDropdown.__getValue();
+    const startMinimized = container.querySelector('#startup-minimized-toggle').checked;
+    const runOnStartup = container.querySelector('#startup-toggle').checked;
+
     if (steamId) {
       store.loginManual({ steamId });
     }
     
-    storage.set('preferences', { theme, lang });
+    // Save preferences
+    const prefs = storage.get('preferences') || {};
+    prefs.theme = theme;
+    prefs.lang = lang;
+    if (closeBehavior === 'prompt') delete prefs.closeBehavior;
+    else prefs.closeBehavior = closeBehavior;
+    prefs.startMinimized = startMinimized;
+    
+    storage.set('preferences', prefs);
     storage.set('farmConfig', farmConfig);
+    
+    // Apply startup settings backend
+    if (window.electronAuth && window.electronAuth.setStartupSettings) {
+      window.electronAuth.setStartupSettings({
+        openAtLogin: runOnStartup,
+        openAsHidden: startMinimized
+      });
+    }
     
     store.set('theme', theme);
     store.set('lang', lang);
@@ -437,8 +485,22 @@ export function createUserPopup() {
       }
     }
     
-    if (themeDropdown.__updateValue) themeDropdown.__updateValue(prefs.theme);
-    if (langDropdown.__updateValue) langDropdown.__updateValue(prefs.lang);
+    if (themeDropdown.__updateValue) themeDropdown.__updateValue(prefs.theme || 'dark');
+    if (langDropdown.__updateValue) langDropdown.__updateValue(prefs.lang || 'en');
+    if (closeDropdown.__updateValue) closeDropdown.__updateValue(prefs.closeBehavior || 'prompt');
+    
+    // Fetch and load startup settings from Electron Backend
+    if (window.electronAuth && window.electronAuth.getStartupSettings) {
+      window.electronAuth.getStartupSettings().then(settings => {
+        const toggle = container.querySelector('#startup-toggle');
+        const minToggle = container.querySelector('#startup-minimized-toggle');
+        const minGroup = container.querySelector('#startup-minimized-group');
+        
+        toggle.checked = settings.openAtLogin;
+        minToggle.checked = prefs.startMinimized || false;
+        minGroup.style.display = settings.openAtLogin ? 'flex' : 'none';
+      }).catch(err => console.error('Failed to get startup settings:', err));
+    }
   }
 
   return container;

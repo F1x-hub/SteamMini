@@ -43,6 +43,11 @@ contextBridge.exposeInMainWorld('electronAuth', {
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   maximizeWindow: () => ipcRenderer.send('window:maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),
+  hideWindow: () => ipcRenderer.send('window:hide'),
+  quitApp: () => ipcRenderer.send('window:quit'),
+  onCloseRequested: (callback) => ipcRenderer.on('app:close-requested', callback),
+  getStartupSettings: () => ipcRenderer.invoke('system:get-startup'),
+  setStartupSettings: (opts) => ipcRenderer.invoke('system:set-startup', opts),
 
   // Achievements
   achievementsLoad: (appId) => ipcRenderer.invoke('achievements:load', appId),
@@ -107,11 +112,14 @@ contextBridge.exposeInMainWorld('electronAuth', {
   // Auto-Updater
   updateCheck: () => ipcRenderer.invoke('update:check'),
   updateInstall: () => ipcRenderer.invoke('update:install'),
+  updateDownload: () => ipcRenderer.invoke('update:download'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   
   // App
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+  onUpdateNotifyAvailable: (callback) => ipcRenderer.on('update:notify-available', (_event, info) => callback(info)),
+  onUpdateNotifyDownloaded: (callback) => ipcRenderer.on('update:notify-downloaded', (_event, info) => callback(info)),
   onUpdateDownloading: (callback) => ipcRenderer.on('update:downloading', () => callback()),
   onUpdateProgress: (callback) => ipcRenderer.on('update:progress', (_event, data) => callback(data)),
   onUpdateError: (callback) => ipcRenderer.on('update:error', (_event, msg) => callback(msg)),

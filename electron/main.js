@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, session, shell, Tray, Menu, nativeImage } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -27,7 +27,9 @@ const { setupAutoUpdater } = require('./updater.cjs');
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const isDev = process.env.NODE_ENV !== 'production';
+const isDev = !app.isPackaged;
+export let isAppQuitting = false;
+let tray = null;
 
 // ──────────────── Global Error Handler ────────────────
 
@@ -57,6 +59,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
+      webSecurity: false,
       preload: path.join(__dirname, 'preload.cjs')
     }
   });
@@ -114,9 +117,19 @@ function createWindow() {
     }
   });
 
+  mainWindow.on('close', (event) => {
+    if (!isAppQuitting) {
+      event.preventDefault();
+      mainWindow.webContents.send('app:close-requested');
+    }
+  });
+
   ipcMain.once('app:ready', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.show();
+      const startMinimized = process.argv.includes('--minimized');
+      if (!startMinimized) {
+        mainWindow.show();
+      }
     }
   });
 }
@@ -134,10 +147,40 @@ registerStats(ipcMain);
 
 // ──────────────── App Lifecycle ────────────────
 
-app.whenReady().then(async () => {
-  createWindow();
+// ──────────────── Single Instance Lock ────────────────
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      if (!mainWindow.isVisible()) mainWindow.show();
+      mainWindow.focus();
+    }
+  });
 
-  // Register modules that need mainWindow
+  app.whenReady().then(async () => {
+    createWindow();
+
+    // Setup Tray
+    const iconPath = path.join(__dirname, '..', 'assets', 'icon.ico');
+    const icon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
+    tray = new Tray(icon);
+    tray.setToolTip('SteamMini');
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: 'Развернуть SteamMini', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
+      { type: 'separator' },
+      { label: 'Выход', click: () => { isAppQuitting = true; app.quit(); } }
+    ]));
+    tray.on('click', () => {
+      if (mainWindow) {
+        if (!mainWindow.isVisible()) mainWindow.show();
+        mainWindow.focus();
+      }
+    });
+
+    // Register modules that need mainWindow
   registerSteam(ipcMain, { mainWindow });
   registerWindow(ipcMain, { mainWindow });
   registerFreeGames(ipcMain);
@@ -176,6 +219,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', () => {
+  isAppQuitting = true;
   achievementBridge.stop();
   cardsBridge.stop();
 });
@@ -184,3 +228,4 @@ app.on('window-all-closed', () => {
   idleManager.stopAll();
   app.quit();
 });
+} // End of single-instance lock block

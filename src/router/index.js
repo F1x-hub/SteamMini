@@ -14,19 +14,20 @@ class Router {
    * Initialize router with a root container
    * @param {HTMLElement} rootElement 
    */
-  async init(rootElement) {
+  async init(rootElement, initialPath) {
     this.rootElement = rootElement;
     
     // Intercept global link clicks for SPA routing
     document.body.addEventListener('click', (e) => {
-      if (e.target.matches('[data-link]')) {
+      const link = e.target.closest('[data-link]');
+      if (link) {
         e.preventDefault();
-        this.navigate(e.target.getAttribute('href'));
+        this.navigate(link.getAttribute('href'));
       }
     });
 
     // Handle initial route
-    return this.handleRoute(window.location.pathname);
+    return this.handleRoute(initialPath || window.location.pathname);
   }
 
   /**

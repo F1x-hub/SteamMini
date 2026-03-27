@@ -107,7 +107,7 @@ export async function renderLibrary() {
       currentSort = 'recent';
       localStorage.setItem('library_sort', 'recent');
     }
-    let showInstalled = false;
+    let showInstalled = localStorage.getItem('library_show_installed') === 'true';
     let isDropsLoaded = false;
     let installedIds = new Set(); // populated once below
     
@@ -494,6 +494,7 @@ export async function renderLibrary() {
 
     window.toggleShowInstalled = () => {
       showInstalled = !showInstalled;
+      localStorage.setItem('library_show_installed', showInstalled.toString());
       renderGames(getFilteredGames());
       renderSortBar();
     };

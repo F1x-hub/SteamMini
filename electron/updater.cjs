@@ -19,24 +19,9 @@ function setupAutoUpdater(mainWindow) {
     autoUpdater.checkForUpdates();
   }, 3000);
 
-  // ── Найдено обновление — спросить пользователя ──
+  // ── Найдено обновление — спросить UI ──
   autoUpdater.on('update-available', (info) => {
-    dialog
-      .showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'Доступно обновление',
-        message: `Версия ${info.version} доступна для установки`,
-        detail: 'Скачать и установить при следующем закрытии?',
-        buttons: ['Скачать', 'Позже'],
-        defaultId: 0,
-      })
-      .then(({ response }) => {
-        if (response === 0) {
-          autoUpdater.downloadUpdate();
-          // Уведомить renderer что идёт загрузка
-          mainWindow.webContents.send('update:downloading');
-        }
-      });
+    mainWindow.webContents.send('update:notify-available', info);
   });
 
   // ── Нет обновлений ──
@@ -54,18 +39,7 @@ function setupAutoUpdater(mainWindow) {
 
   // ── Загрузка завершена ──
   autoUpdater.on('update-downloaded', (info) => {
-    dialog
-      .showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'Обновление загружено',
-        message: `Версия ${info.version} готова к установке`,
-        detail: 'Установить сейчас и перезапустить приложение?',
-        buttons: ['Установить и перезапустить', 'Позже'],
-        defaultId: 0,
-      })
-      .then(({ response }) => {
-        if (response === 0) autoUpdater.quitAndInstall();
-      });
+    mainWindow.webContents.send('update:notify-downloaded', info);
   });
 
   // ── Ошибка ──
@@ -112,9 +86,15 @@ function setupAutoUpdater(mainWindow) {
     });
   });
 
+  // ── IPC — запустить загрузку ──
+  ipcMain.handle('update:download', () => {
+    autoUpdater.downloadUpdate();
+    mainWindow.webContents.send('update:downloading');
+  });
+
   // ── IPC — установить после скачивания ──
   ipcMain.handle('update:install', () => {
-    autoUpdater.quitAndInstall();
+    autoUpdater.quitAndInstall(true, true);
   });
 }
 

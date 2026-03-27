@@ -6,8 +6,10 @@ const GLOBAL_API_KEY = "08FB1451659E540949A6AF2A3F5D99E5"; // <-- Вставьт
 
 class SteamAPI {
   constructor() {
-    this.proxiedStoreAPI = '/api/store';
-    this.proxiedWebAPI = '/api/steam';
+    const isPackaged = window.location.protocol === 'file:';
+    this.proxiedStoreAPI = isPackaged ? 'https://store.steampowered.com/api' : '/api/store';
+    this.proxiedWebAPI = isPackaged ? 'https://api.steampowered.com' : '/api/steam';
+    this.communityAPI = isPackaged ? 'https://steamcommunity.com' : '/api/community';
   }
 
   async _getCredentials() {
@@ -17,7 +19,8 @@ class SteamAPI {
   async _fetch(endpoint, isStore = false, params = {}) {
     // Determine the base url based on Vite proxy paths
     const baseURL = isStore ? this.proxiedStoreAPI : this.proxiedWebAPI;
-    const url = new URL(`${window.location.origin}${baseURL}${endpoint}`);
+    const urlStr = baseURL.startsWith('http') ? `${baseURL}${endpoint}` : `${window.location.origin}${baseURL}${endpoint}`;
+    const url = new URL(urlStr);
     
     // Check tokens and refresh if needed
     const creds = await this._getCredentials();
@@ -89,7 +92,11 @@ class SteamAPI {
 
     // Fallback to XML profile parsing
     console.log(`[SteamAPI] Fetching public XML profile for ${steamId}`);
-    const xmlUrl = new URL(`${window.location.origin}/api/community/profiles/${steamId}/?xml=1`);
+    const commBase = this.communityAPI;
+    const urlStr = commBase.startsWith('http') 
+        ? `${commBase}/profiles/${steamId}/?xml=1` 
+        : `${window.location.origin}${commBase}/profiles/${steamId}/?xml=1`;
+    const xmlUrl = new URL(urlStr);
     const response = await fetch(xmlUrl);
     
     if (!response.ok) {
