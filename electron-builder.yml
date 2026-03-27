@@ -9,10 +9,8 @@ files:
   - electron/**/*
 
 extraResources:
-  - from: resources/SAMBackend.exe
-    to: SAMBackend.exe
-  - from: resources/steam_api64.dll
-    to: steam_api64.dll
+  - from: resources
+    to: .
 
 nsis:
   oneClick: false
@@ -32,6 +30,6 @@ win:
 
 publish:
   provider: github
-  owner: YOUR_GITHUB_USERNAME            # ← заменить на ваш GitHub username
-  repo: YOUR_REPO_NAME                   # ← заменить на название репозитория
+  owner: F1x-hub
+  repo: SteamMini
   releaseType: release
