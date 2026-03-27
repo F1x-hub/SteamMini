@@ -1,0 +1,29 @@
+{
+    "nav": {
+        "steam": "Steam",
+        "epic": "Epic Games",
+        "gog": "GOG",
+        "settings": "Settings"
+    },
+    "home": {
+        "title": "Welcome to GameController",
+        "subtitle": "Your unified gaming hub. Connect your accounts to view your library and wishlist.",
+        "profile": "Profile",
+        "profileDesc": "View your Steam Profile, Level and Status.",
+        "library": "Library",
+        "libraryDesc": "Browse your owned games and launch them effortlessly.",
+        "wishlist": "Wishlist",
+        "wishlistDesc": "Track your Steam wishlist and get notified on discounts."
+    },
+    "settings": {
+        "title": "Settings & Accounts",
+        "steamIntegration": "Steam Integration",
+        "steamDesc": "Enter your Steam credentials to fetch your library and wishlist.",
+        "steamId": "SteamID64",
+        "apiKey": "WebAPI Key",
+        "preferences": "Preferences",
+        "theme": "Theme",
+        "language": "Language",
+        "save": "Save Changes"
+    }
+}

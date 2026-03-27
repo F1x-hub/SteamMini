@@ -1,0 +1,29 @@
+{
+    "nav": {
+        "steam": "Steam",
+        "epic": "Epic Games",
+        "gog": "GOG",
+        "settings": "Настройки"
+    },
+    "home": {
+        "title": "Добро пожаловать в GameController",
+        "subtitle": "Единый хаб. Подключите аккаунты, чтобы просматривать библиотеку и вишлист.",
+        "profile": "Профиль",
+        "profileDesc": "Посмотреть профиль Steam, уровень и статус.",
+        "library": "Библиотека",
+        "libraryDesc": "Просматривайте купленные игры и запускайте их.",
+        "wishlist": "Вишлист",
+        "wishlistDesc": "Отслеживайте вишлист Steam и скидки."
+    },
+    "settings": {
+        "title": "Настройки аккаунтов",
+        "steamIntegration": "Интеграция Steam",
+        "steamDesc": "Введите учетные данные Steam для получения библиотеки и вишлиста.",
+        "steamId": "SteamID64",
+        "apiKey": "WebAPI Key",
+        "preferences": "Настройки",
+        "theme": "Тема",
+        "language": "Язык",
+        "save": "Сохранить"
+    }
+}

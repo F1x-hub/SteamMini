@@ -1,0 +1,37 @@
+appId: com.steammini.app
+productName: SteamMini
+
+directories:
+  output: dist_electron
+
+files:
+  - dist/**/*
+  - electron/**/*
+
+extraResources:
+  - from: resources/SAMBackend.exe
+    to: SAMBackend.exe
+  - from: resources/steam_api64.dll
+    to: steam_api64.dll
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  runAfterFinish: false
+  # installerIcon: assets/icon.ico      # ← раскомментировать когда assets/icon.ico будет создан
+  # uninstallerIcon: assets/icon.ico
+  shortcutName: SteamMini
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  # icon: assets/icon.ico               # ← раскомментировать когда assets/icon.ico будет создан
+
+publish:
+  provider: github
+  owner: YOUR_GITHUB_USERNAME            # ← заменить на ваш GitHub username
+  repo: YOUR_REPO_NAME                   # ← заменить на название репозитория
+  releaseType: release

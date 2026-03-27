@@ -1,0 +1,110 @@
+:root {
+  /* Modern Dark Minimalist Theme (Yin) */
+  --color-bg-base: #0a0a0a;
+  --color-bg-surface: #0d0d0d;
+  --color-bg-surface-light: #111111;
+  --color-bg-card: #161616;
+  
+  --color-text-primary: #ededed;
+  --color-text-secondary: #888888;
+  --color-text-accent: #ffffff;  /* White interactives in dark theme */
+  
+  --color-action-primary: #ffffff;
+  --color-action-hover: #e0e0e0;
+  
+  --color-border: #222222;
+  --color-hover-border: rgba(255, 255, 255, 0.15);
+
+  /* Semantic Colors */
+  --color-accent: #6366f1;
+  --color-accent-green: #22c55e;
+  --color-danger: #ef4444;
+  --color-warning: #f59e0b;
+  --color-success: #10b981;
+
+  /* Elevated surfaces */
+  --color-bg-elevated: #1a1a1a;
+  --color-bg-hover: #1e1e1e;
+
+  /* Custom Dropdowns (Yin) */
+  --color-dropdown-bg: #111111;
+  --color-dropdown-border: rgba(255, 255, 255, 0.08);
+  --color-dropdown-hover: rgba(255, 255, 255, 0.03);
+  --color-dropdown-active: rgba(255, 255, 255, 0.06);
+  --color-dropdown-active-border: #ffffff;
+
+  /* Hover effect variable */
+  --hover-ring: 0 0 0 1px rgba(255, 255, 255, 0.2);
+
+  /* Typography */
+  --font-family-base: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-size-base: 14px;
+  
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-base: 250ms ease;
+  --transition-slow: 400ms ease;
+
+  /* Borders and Spacing */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  
+  /* Shadows */
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.4);
+  --shadow-hover: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+/* Smooth theme transition */
+html {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+[data-theme="light"] {
+  /* Light theme (Yang) */
+  --color-bg-base: #f5f5f5;
+  --color-bg-surface: #ffffff;
+  --color-bg-surface-light: #ebebeb;
+  --color-bg-card: #e0e0e0;
+  
+  --color-text-primary: #000000;
+  --color-text-secondary: #666666;
+  --color-text-accent: #000000; /* Black interactives in light theme */
+  
+  --color-action-primary: #000000;
+  --color-action-hover: #222222;
+  
+  --color-border: #cccccc;
+  --color-hover-border: rgba(0, 0, 0, 0.15);
+
+  /* Semantic Colors (light) */
+  --color-accent: #4f46e5;
+  --color-accent-green: #16a34a;
+  --color-danger: #dc2626;
+  --color-warning: #d97706;
+  --color-success: #059669;
+
+  /* Elevated surfaces (light) */
+  --color-bg-elevated: #f0f0f0;
+  --color-bg-hover: #e8e8e8;
+
+  /* Custom Dropdowns (Yang) */
+  --color-dropdown-bg: #efefef;
+  --color-dropdown-border: rgba(0, 0, 0, 0.08);
+  --color-dropdown-hover: rgba(0, 0, 0, 0.04);
+  --color-dropdown-active: rgba(0, 0, 0, 0.08);
+  --color-dropdown-active-border: #000000;
+
+  /* Hover effect variable */
+  --hover-ring: 0 0 0 1px rgba(0, 0, 0, 0.2);
+  
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.08);
+  --shadow-hover: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
