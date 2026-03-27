@@ -15,7 +15,7 @@ extraResources:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  runAfterFinish: false
+  runAfterFinish: true
   # installerIcon: assets/icon.ico      # ← раскомментировать когда assets/icon.ico будет создан
   # uninstallerIcon: assets/icon.ico
   shortcutName: SteamMini
