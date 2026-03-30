@@ -134,6 +134,249 @@ function sanitizeRequirements(html) {
     .replace(/on\w+='[^']*'/gi, '');
 }
 
+const badgesCss = `
+.badge-block {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.badge-icon-wrap {
+  width: 54px;
+  height: 54px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.badge-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.badge-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.badge-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary, #fff);
+  line-height: 1.2;
+}
+
+.badge-level {
+  font-size: 12px;
+  color: #8f98a0;
+}
+
+.badge-max-label {
+  display: block;
+  font-size: 13px;
+  color: #57cbde;
+  margin-bottom: 12px;
+}
+
+.badge-skeleton {
+  height: 78px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  animation: skeleton-pulse 1.2s ease-in-out infinite alternate;
+  margin-bottom: 12px;
+}
+
+@keyframes skeleton-pulse {
+  from { opacity: 0.5; }
+  to   { opacity: 1; }
+}
+
+/* Карточки: серые по умолчанию когда не собраны */
+.card-item--uncollected {
+  filter: grayscale(100%) brightness(0.65);
+  transition: filter 0.4s ease;
+}
+
+/* Максимальный уровень — все карточки цветные */
+.cards--max-level .card-item--uncollected {
+  filter: none;
+}
+
+/* Card Preview Modal */
+.card-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.9);
+  z-index: 10000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  backdrop-filter: blur(5px);
+  cursor: pointer;
+}
+
+.modal-content {
+  position: relative;
+  max-width: 90%;
+  max-height: 90%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: default;
+}
+
+.modal-content img {
+  max-width: 100%;
+  max-height: 80vh;
+  border: 1px solid #3c3d3e;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.8);
+  border-radius: 4px;
+}
+
+.modal-close-btn {
+  margin-top: 20px;
+  padding: 10px 60px;
+  background: linear-gradient(to bottom, #47bfff 0%, #1a44c2 100%);
+  border: none;
+  color: white;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 500;
+  border-radius: 2px;
+  transition: filter 0.2s, transform 0.1s;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.modal-close-btn:hover {
+  filter: brightness(1.2);
+}
+
+.modal-close-btn:active {
+  transform: translateY(1px);
+}
+`;
+
+function injectBadgeCss() {
+  if (document.getElementById('badge-css')) return;
+  const style = document.createElement('style');
+  style.id = 'badge-css';
+  style.textContent = badgesCss;
+  document.head.appendChild(style);
+
+  // Global Modal Logic
+  window.openCardModal = (url) => {
+    let modal = document.getElementById('card-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'card-modal';
+      modal.className = 'card-modal';
+      modal.innerHTML = `
+        <div class="modal-content">
+          <img id="modal-img" src="" alt="Full size card">
+          <button class="modal-close-btn">Закрыть</button>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) window.closeCardModal();
+      });
+      modal.querySelector('.modal-close-btn').onclick = window.closeCardModal;
+    }
+    
+    document.getElementById('modal-img').src = url;
+    modal.style.display = 'flex';
+    
+    const handleEsc = (e) => {
+      if (e.key === "Escape") window.closeCardModal();
+    };
+    document.addEventListener('keydown', handleEsc);
+    window._modalEscHandler = handleEsc;
+  };
+
+  window.closeCardModal = () => {
+    const modal = document.getElementById('card-modal');
+    if (modal) modal.style.display = 'none';
+    if (window._modalEscHandler) {
+      document.removeEventListener('keydown', window._modalEscHandler);
+      window._modalEscHandler = null;
+    }
+  };
+}
+
+async function loadBadgeSection(appId) {
+  const steamId = store.get('user')?.steamId ?? '76561198271597868'
+  const container = document.querySelector('.game-badge-container')
+  if (!container) return
+
+  // Скелетон пока грузится
+  container.innerHTML = `<div class="badge-skeleton"></div>`
+
+  let badge = { hasBadge: false }
+  try {
+    if (window.electronAuth && window.electronAuth.getGameBadge) {
+      badge = await window.electronAuth.getGameBadge(steamId, String(appId))
+    }
+  } catch (e) {
+    console.warn('[badge] ошибка:', e)
+  }
+
+  container.innerHTML = ''
+
+  if (!badge.hasBadge) {
+    // Пустой пунктирный круг — как в Steam когда бейдж не создан
+    container.innerHTML = `
+      <div class="badge-block">
+        <div class="badge-icon-wrap" style="background:transparent; border: 1px dashed rgba(255,255,255,0.2); border-radius: 50%;"></div>
+        <div class="badge-info">
+          <span class="badge-level">Значок не создан</span>
+        </div>
+      </div>
+    `
+  } else {
+    const iconHtml = badge.iconUrl
+      ? `<img src="${badge.iconUrl}" class="badge-icon-img" alt="${badge.badgeName ?? ''}"/>`
+      : `<div style="font-size: 20px; color: #5f6b72; font-weight: bold;">${badge.level}</div>`
+
+    const statusHtml = badge.isMaxLevel
+      ? `<div class="badge-max-label">Поздравляем! У вашего значка максимальный уровень!</div>`
+      : ''
+
+    container.innerHTML = `
+      <div class="badge-block">
+        <div class="badge-icon-wrap">
+          ${iconHtml}
+        </div>
+        <div class="badge-info">
+          <span class="badge-name">${badge.badgeName || 'Значок игры'}</span>
+          <span class="badge-level">Уровень ${badge.level}, ${badge.xp} опыта</span>
+        </div>
+      </div>
+      ${statusHtml}
+    `
+  }
+
+  // Переключаем цвет карточек: при макс. уровне — цветные, иначе — серые у несобранных
+  const cardsGrid = document.querySelector('.cards-grid')
+  if (cardsGrid) {
+    cardsGrid.classList.toggle('cards--max-level', badge.isMaxLevel)
+  }
+}
+
 /**
  * Verifies if the game is actually in the user's library.
  */
@@ -479,6 +722,9 @@ export async function renderGameDetail(appId) {
       if (cardsSlot) {
         cardsSlot.replaceWith(createGameCardsBlock(appId));
       }
+
+      injectBadgeCss();
+      setTimeout(() => loadBadgeSection(appId), 0);
 
       // Render achievements if logged in
       if (isFromLibrary) {

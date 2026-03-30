@@ -22,7 +22,8 @@ export async function renderCardsInventory() {
       <div class="title-group">
         <h2>Торговые карточки · <span id="cards-count">...</span> шт.</h2>
       </div>
-      <div class="header-actions" style="display: flex; gap: 8px;">
+      <div class="header-actions" style="display: flex; gap: 8px; align-items: center;">
+        <div id="selection-panel" style="display: flex; gap: 8px; align-items: center;"></div>
         <button id="select-mode-btn" class="btn-outline">☑ Выбрать для продажи</button>
         <button id="refresh-cards-btn" class="refresh-btn">Обновить</button>
       </div>
@@ -35,7 +36,6 @@ export async function renderCardsInventory() {
     </div>
 
     <div id="main-content-area">
-      <div id="selection-panel" style="display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap;"></div>
       <div id="price-summary"></div>
       <div id="sell-config-panel" style="display: none; padding: 16px; background: #111; border: 1px solid #1e1e1e; border-radius: 10px; margin-bottom: 16px; align-items: center; gap: 12px; flex-wrap: wrap;"></div>
       <div id="sell-progress-panel" style="display: none; padding: 12px 16px; background: #111; border: 1px solid #1e1e1e; border-radius: 8px; margin-bottom: 12px; font-size: 12px; color: #555;"></div>

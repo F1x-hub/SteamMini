@@ -50,7 +50,7 @@
 
 | Группа | Канал | Назначение |
 | :--- | :--- | :--- |
-| **Auth** | `auth:steam-direct`, `auth:openid` | Логин через окно Steam или системный браузер. |
+| **Auth** | `auth:steam-direct` | Логин через окно Steam. |
 | **Steam** | `steam:fetch-html`, `steam:is-installed` | Запросы к Steam Community и проверка локальных файлов. |
 | **Idle** | `idle:start`, `idle:stop`, `idle:active` | Управление процессами имитации игры. |
 | **Stats** | `stats:get`, `stats:record-drop` | Получение и запись статистики выпавших карточек. |
@@ -88,7 +88,7 @@
 
 `store/index.js` реализует простой паттерн Pub/Sub (Publish-Subscribe).
 *   **Состояния:** `user` (объект с именем/аватаром), `isAuthenticated` (boolean), `popupOpen` (boolean), `currentRoute` (string), `platform` (string), `theme` (string), `lang` (string), `auth` (токены Steam).
-*   **Методы:** `get(key)`, `set(key, val)`, `subscribe(key, cb)`, `update(key, obj)`, а также методы бизнес-логики (`initAuth`, `fetchUserProfile`, `loginSteamDirect`, `loginOpenId`, `loginManual`, `logout`).
+*   **Методы:** `get(key)`, `set(key, val)`, `subscribe(key, cb)`, `update(key, obj)`, а также методы бизнес-логики (`initAuth`, `fetchUserProfile`, `loginSteamDirect`, `loginManual`, `logout`).
 
 ---
 

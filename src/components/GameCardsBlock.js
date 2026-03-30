@@ -7,6 +7,7 @@ const CDN = 'https://community.akamai.steamstatic.com/economy/image/';
  */
 function createCard3D(card) {
   const wrap = document.createElement('div');
+  wrap.className = card.owned ? 'card-item' : 'card-item card-item--uncollected';
   wrap.title = card.name;
   wrap.style.cssText = `
     display: flex;
@@ -28,11 +29,20 @@ function createCard3D(card) {
     object-fit: cover;
     background: #1a1a2e;
     display: block;
-    filter: ${card.owned ? 'brightness(1)' : 'grayscale(100%) brightness(0.5)'};
     transition: transform 0.35s ease-out, filter 0.35s ease-out, box-shadow 0.35s ease-out;
     will-change: transform;
+    cursor: pointer;
   `;
   img.addEventListener('error', () => { img.style.opacity = '0.1'; });
+
+  // Full-size preview on click
+  img.onclick = (e) => {
+    e.stopPropagation();
+    if (window.openCardModal) {
+      // Use 512x512 for high-res preview
+      window.openCardModal(`${CDN}${card.icon}/512fx512f`);
+    }
+  };
 
   // 3D tilt on mouse move
   wrap.addEventListener('mousemove', (e) => {
@@ -47,9 +57,7 @@ function createCard3D(card) {
     const brightness = 0.85 + ((cy - y) / cy) * 0.35;
 
     img.style.transform = `perspective(300px) rotateX(${rotX}deg) rotateY(${rotY}deg) scale3d(2,2,2)`;
-    img.style.filter = card.owned
-      ? `brightness(${brightness})`
-      : `grayscale(100%) brightness(${brightness * 0.5})`;
+    img.style.filter = `brightness(${brightness})`;
     img.style.boxShadow = `${-rotY * 0.5}px ${rotX * 0.5}px 18px rgba(0,0,0,0.6)`;
     img.style.transition = 'none';
     wrap.style.zIndex = '50';
@@ -59,7 +67,7 @@ function createCard3D(card) {
   wrap.addEventListener('mouseleave', () => {
     img.style.transition = 'transform 0.45s cubic-bezier(0.23,1,0.32,1), filter 0.45s ease-out, box-shadow 0.45s ease-out';
     img.style.transform = 'perspective(300px) rotateX(0deg) rotateY(0deg) scale3d(1,1,1)';
-    img.style.filter = card.owned ? 'brightness(1)' : 'grayscale(100%) brightness(0.5)';
+    img.style.filter = 'none';
     img.style.boxShadow = 'none';
     wrap.style.zIndex = '1';
   });
@@ -134,6 +142,10 @@ export function createGameCardsBlock(appId) {
   header.appendChild(totalBadge);
   block.appendChild(header);
 
+  const badgeContainer = document.createElement('div');
+  badgeContainer.className = 'game-badge-container';
+  block.appendChild(badgeContainer);
+
   const body = document.createElement('div');
   body.style.cssText = 'font-size: 12px; color: #5f6b72;';
   body.textContent = 'Загрузка...';
@@ -169,6 +181,7 @@ export function createGameCardsBlock(appId) {
 
     // Card grid — overflow: visible for 3D effect
     const grid = document.createElement('div');
+    grid.className = 'cards-grid';
     grid.style.cssText = `
       display: flex;
       flex-wrap: wrap;

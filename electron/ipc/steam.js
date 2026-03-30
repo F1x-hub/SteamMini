@@ -2,10 +2,11 @@ import { exec } from 'child_process';
 import { execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { app, net, shell, session } from 'electron';
-import { httpsGet, dedupe, timer, refreshSteamCookies } from '../utils/helpers.js';
+import { app, net, shell, session, BrowserWindow } from 'electron';
+import { httpsGet, dedupe, timer, refreshSteamCookies, getSteamCookies } from '../utils/helpers.js';
 import { parseRecentGames, getLocalConfigPathExported } from '../recentGames.js';
 import https from 'https';
+import zlib from 'zlib';
 
 /**
  * Steam core IPC handlers.
@@ -323,88 +324,128 @@ export function register(ipcMain, { mainWindow }) {
 
   // ─── Redeem Key ─────────────────────────────────────────
   ipcMain.handle('steam:redeem-key', async (_, { key }) => {
+    const t = timer('steam:redeem-key');
+    console.log('[activate] Redeeming key via hidden browser:', key.substring(0, 5) + '...');
+    
+    let authWin = null;
     try {
-      const ses         = session.defaultSession;
-      const storeCookies = await ses.cookies.get({ domain: 'store.steampowered.com' });
-      const commCookies  = await ses.cookies.get({ domain: 'steamcommunity.com' });
-
-      const sessionId   = storeCookies.find(c => c.name === 'sessionid')?.value
-                       ?? commCookies.find(c => c.name === 'sessionid')?.value ?? '';
-      const loginSecure = storeCookies.find(c => c.name === 'steamLoginSecure')?.value
-                       ?? commCookies.find(c => c.name === 'steamLoginSecure')?.value ?? '';
-
-      console.log('[activate] Redeeming key:', key.substring(0, 5) + '...');
-
-      const body = new URLSearchParams({
-        product_key: key.trim(),
-        sessionid:   sessionId,
-      }).toString();
-
-      const result = await new Promise((resolve, reject) => {
-        const req = https.request({
-          hostname: 'store.steampowered.com',
-          path:     '/account/ajaxregisterkey/',
-          method:   'POST',
-          headers: {
-            'Cookie':         `sessionid=${sessionId}; steamLoginSecure=${loginSecure}`,
-            'Content-Type':   'application/x-www-form-urlencoded',
-            'Content-Length': Buffer.byteLength(body),
-            'User-Agent':     'Mozilla/5.0',
-            'Referer':        'https://store.steampowered.com/account/registerkey',
-            'Origin':         'https://store.steampowered.com',
-            'Accept':         'application/json, text/plain, */*',
-          }
-        }, res => {
-          let data = '';
-          res.on('data', c => data += c);
-          res.on('end', () => {
-            console.log('[activate] HTTP:', res.statusCode);
-            console.log('[activate] Raw:', data.substring(0, 300));
-            try { resolve(JSON.parse(data)); }
-            catch { reject(new Error('Invalid JSON')); }
-          });
-        });
-        req.on('error', reject);
-        req.write(body);
-        req.end();
+      authWin = new BrowserWindow({
+        show: false,
+        width: 1024,
+        height: 768,
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+          session: session.defaultSession
+        }
       });
 
-      const detail = result.purchase_result_details;
-      console.log('[activate] purchase_result_details:', detail);
+      // Load the activation page with the key pre-filled
+      const url = `https://store.steampowered.com/account/registerkey?key=${encodeURIComponent(key.trim())}`;
+      await authWin.loadURL(url);
 
-      if (detail === 0) {
-        const lineItems = result.purchase_receipt_info?.line_items ?? [];
-        const gameName  = lineItems[0]?.line_item_description ?? null;
+      // Execute script to agree to SSA and click "Register"
+      const result = await authWin.webContents.executeJavaScript(`
+        new Promise((resolve) => {
+          const checkAndSubmit = async () => {
+            const ssaBox = document.getElementById('accept_ssa') || document.getElementById('ssa_agree');
+            const registerBtn = document.getElementById('register_btn');
+            const productKeyInput = document.getElementById('product_key');
 
-        console.log('[activate] Success! Game:', gameName);
-        console.log('[activate] Line items:', JSON.stringify(lineItems));
+            if (!registerBtn || !productKeyInput) {
+               if (document.body.innerText.includes('Sign In') || document.getElementById('login_btn_signin')) {
+                  resolve({ success: false, error: 'Вы не авторизованы в Steam. Пожалуйста, войдите в аккаунт.' });
+                  return;
+               }
+               resolve({ success: false, error: 'Не удалось найти элементы на странице активации' });
+               return;
+            }
 
-        return {
-          success:  true,
-          msg:      'Игра успешно активирована!',
-          gameName: gameName,
-        };
+            // Ensure key is present and trigger input events
+            if (productKeyInput) {
+              if (!productKeyInput.value) {
+                  const urlParams = new URLSearchParams(window.location.search);
+                  const keyParam = urlParams.get('key');
+                  if (keyParam) productKeyInput.value = keyParam;
+              }
+              productKeyInput.dispatchEvent(new Event('input', { bubbles: true }));
+              productKeyInput.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+
+            // Force check SSA box
+            if (ssaBox) {
+              console.log('Found SSA checkbox, clicking...');
+              if (!ssaBox.checked) {
+                ssaBox.click(); 
+              }
+              ssaBox.checked = true;
+              ssaBox.dispatchEvent(new Event('click', { bubbles: true }));
+              ssaBox.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            
+            await new Promise(r => setTimeout(r, 1000));
+
+            if (registerBtn.disabled) {
+               registerBtn.disabled = false;
+            }
+
+            registerBtn.click();
+
+            // Monitor for result
+            const pollResult = setInterval(() => {
+                const errorDisplay = document.getElementById('error_display');
+                const receiptContainer = document.getElementById('registerkey_receipt_container');
+                
+                // 1. Check for SUCCESS
+                if (receiptContainer && receiptContainer.style.display !== 'none') {
+                    clearInterval(pollResult);
+                    const lineItems = Array.from(document.querySelectorAll('.registerkey_lineitem'))
+                        .map(el => el.innerText.trim())
+                        .join(', ');
+                    resolve({ success: true, detail: lineItems || 'Ключ успешно активирован' });
+                    return;
+                }
+
+                // 2. Check for ERROR
+                if (errorDisplay && errorDisplay.style.display !== 'none' && errorDisplay.innerText.trim()) {
+                    const errorText = errorDisplay.innerText.trim();
+                    if (errorText.length > 0) {
+                      clearInterval(pollResult);
+                      resolve({ success: false, error: errorText });
+                      return;
+                    }
+                }
+            }, 500);
+
+            // Timeout after 25 seconds
+            setTimeout(() => {
+                clearInterval(pollResult);
+                resolve({ success: false, error: 'Превышено время ожидания ответа от Steam' });
+            }, 25000);
+          };
+
+          if (document.readyState === 'complete') {
+             setTimeout(checkAndSubmit, 1500);
+          } else {
+             window.onload = () => setTimeout(checkAndSubmit, 1500);
+          }
+        });
+      `);
+
+      if (result.success) {
+        t.end(`(success: ${result.detail})`);
+        return { success: true, msg: 'Игра успешно активирована!', gameName: result.detail };
+      } else {
+        t.end(`(error: ${result.error})`);
+        return { success: false, msg: result.error };
       }
 
-      const ERROR_MESSAGES = {
-        1:  'Успешно активировано!',
-        9:  'Эта игра уже есть в вашей библиотеке',
-        13: 'Этот продукт недоступен для покупки в вашей стране',
-        14: 'Недействительный ключ активации',
-        15: 'Слишком много неудачных попыток. Попробуйте позже',
-        53: 'Слишком много запросов. Подождите несколько минут',
-      };
-
-      const message = ERROR_MESSAGES[detail] || `Ошибка активации (код ${detail})`;
-
-      return {
-        success: detail === 1,
-        msg:     message,
-      };
-
     } catch (err) {
-      console.error('[activate] Error:', err.message);
+      console.error('[activate] Fatal error:', err);
+      t.end('(Fatal error)');
       return { error: err.message };
+    } finally {
+      if (authWin) authWin.destroy();
     }
   });
 }

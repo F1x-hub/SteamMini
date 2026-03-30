@@ -12,19 +12,24 @@ function getSteamPath() {
   if (_steamPathCache) return _steamPathCache;
 
   if (process.platform === 'win32') {
-    try {
-      const reg = execSync(
-        'reg query "HKCU\\Software\\Valve\\Steam" /v SteamPath',
-        { encoding: 'utf-8', timeout: 3000 }
-      );
-      const match = reg.match(/SteamPath\s+REG_SZ\s+(.+)/);
-      if (match) {
-        _steamPathCache = match[1].trim().replace(/\//g, '\\');
-        console.log('[Steam] Found via registry:', _steamPathCache);
-        return _steamPathCache;
+    const regQueries = [
+      { cmd: 'reg query "HKLM\\SOFTWARE\\Wow6432Node\\Valve\\Steam" /v InstallPath', regex: /InstallPath\s+REG_SZ\s+(.+)/ },
+      { cmd: 'reg query "HKLM\\SOFTWARE\\Valve\\Steam" /v InstallPath', regex: /InstallPath\s+REG_SZ\s+(.+)/ },
+      { cmd: 'reg query "HKCU\\Software\\Valve\\Steam" /v SteamPath', regex: /SteamPath\s+REG_SZ\s+(.+)/ }
+    ];
+
+    for (const query of regQueries) {
+      try {
+        const reg = execSync(query.cmd, { encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+        const match = reg.match(query.regex);
+        if (match) {
+          _steamPathCache = match[1].trim().replace(/\//g, '\\');
+          console.log('[Steam] Found via registry:', _steamPathCache);
+          return _steamPathCache;
+        }
+      } catch (e) {
+        // Ignore and try the next query
       }
-    } catch (e) {
-      console.warn('[Steam] Registry read failed:', e.message);
     }
 
     const fallbacks = [

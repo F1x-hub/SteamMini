@@ -385,13 +385,6 @@ export function renderLogin() {
           </span>
         </button>
 
-        <button class="auth-btn" id="btn-openid">
-          <span class="auth-btn-icon">🌐</span>
-          <span class="auth-btn-text">
-            <span class="auth-btn-title">Войти через браузер</span>
-            <span class="auth-btn-subtitle">Steam OpenID — быстро и безопасно</span>
-          </span>
-        </button>
       </div>
 
       <div class="login-divider">или</div>
@@ -461,20 +454,6 @@ export function renderLogin() {
         await handleLoginSuccess();
       } catch (err) {
         showError(err.message || 'Ошибка входа через Steam');
-      }
-    });
-  }
-
-  // OpenID Login
-  const btnOpenId = container.querySelector('#btn-openid');
-  if (btnOpenId) {
-    btnOpenId.addEventListener('click', async () => {
-      showLoading('Ожидаем авторизацию в браузере...');
-      try {
-        await store.loginOpenId();
-        await handleLoginSuccess();
-      } catch (err) {
-        showError(err.message || 'Ошибка OpenID авторизации');
       }
     });
   }

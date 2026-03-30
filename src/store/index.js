@@ -182,26 +182,6 @@ class Store {
   }
 
   /**
-   * Login via Steam OpenID (system browser)
-   */
-  async loginOpenId() {
-    console.log('[Store loginOpenId] Initiating OpenID login...');
-    this.set('isAuthLoading', true);
-    try {
-      const credentials = await authApi.openIdLogin();
-      console.log('[Store loginOpenId] Credentials received:', credentials);
-      this.set('auth', credentials);
-      this.set('isAuthenticated', true);
-      return true;
-    } catch (e) {
-      console.error('[Store loginOpenId] error:', e);
-      throw e;
-    } finally {
-      this.set('isAuthLoading', false);
-    }
-  }
-
-  /**
    * Manual login with user-provided credentials
    */
   loginManual(credentials) {

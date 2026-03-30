@@ -181,6 +181,8 @@ export async function renderLibrary() {
       }
     }
 
+    console.log('[Filter] All games count:', games.length);
+
     // Fetch card drops asynchronously
     steamApi.getRemainingCardDrops().then(drops => {
       console.log('[Library] Card drops mapping received:', Object.keys(drops).length, 'games');
@@ -317,8 +319,19 @@ export async function renderLibrary() {
     });
 
     const renderGames = async (list, fullRender = true) => {
+      console.log('[Filter] Filtered games count:', list.length);
+
       let totalDrops = 0;
-      let gamesWithDrops = 0;
+      let gamesWithDropsCount = 0;
+
+      // Calculate totals using ALL games (ignore UI filters)
+      games.forEach(game => {
+        const drops = cardDropsData[String(game.appid)] || 0;
+        if (drops > 0) {
+          totalDrops += drops;
+          gamesWithDropsCount++;
+        }
+      });
 
       if (fullRender) {
         // Chunked rendering — avoid blocking UI with 10k+ DOM nodes
@@ -403,10 +416,6 @@ export async function renderLibrary() {
 
         let isIdling = activeIdles.has(game.appid.toString());
         const remainingDrops = cardDropsData[String(game.appid)] || 0;
-        if (remainingDrops > 0) {
-          totalDrops += remainingDrops;
-          gamesWithDrops++;
-        }
 
         let badgeHtml = '';
         let cardState = '';
@@ -460,7 +469,7 @@ export async function renderLibrary() {
       libraryCountEl.textContent = list.length;
       if (isDropsLoaded && filterCardsOnly) {
         globalDropsEl.style.display = 'flex';
-        globalDropsEl.innerHTML = `${totalDrops} карточек &middot; ${gamesWithDrops} игр`;
+        globalDropsEl.innerHTML = `${totalDrops} карточек &middot; ${gamesWithDropsCount} игр`;
       } else {
         globalDropsEl.style.display = 'none';
       }
@@ -545,7 +554,8 @@ export async function renderLibrary() {
         filtered = filtered.filter(g => ((cardDropsData[String(g.appid)] || 0) > 0) || activeBatchIds.has(String(g.appid)));
       }
       let result = sortGames(filtered, currentSort);
-      if (showInstalled) {
+      // Only filter by installation if we are NOT in Cards mode
+      if (showInstalled && !filterCardsOnly) {
         result = result.filter(g => g.isInstalled);
       }
       return result;

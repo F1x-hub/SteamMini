@@ -8,7 +8,6 @@ const electronAuthMock = {
   getIdleActive: vi.fn().mockResolvedValue({ success: true, data: [] }),
   fetchSteamHtml: vi.fn().mockResolvedValue({ success: true, data: '' }),
   steamDirectLogin: vi.fn(),
-  openIdLogin: vi.fn(),
   onAuthResult: vi.fn(),
   minimizeWindow: vi.fn(),
   maximizeWindow: vi.fn(),

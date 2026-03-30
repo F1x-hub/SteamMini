@@ -1,27 +1,20 @@
 import { BrowserWindow, session } from 'electron';
 
 /**
- * Opens a BrowserWindow with the Steam login page.
+ * Opens the internal browser with the Steam login page.
  * After user logs in, extracts steamId from cookies and
  * fetches webapi_token from pointssummary/ajaxgetasyncconfig.
  * 
+ * @param {BrowserWindow} mainWindow
  * @returns {Promise<{steamId: string, webApiToken: string, mode: string}>}
  */
-export function steamDirectLogin() {
+export function steamDirectLogin(mainWindow) {
   return new Promise((resolve, reject) => {
-    const authWin = new BrowserWindow({
-      width: 900,
-      height: 700,
-      title: 'Steam Login',
-      autoHideMenuBar: true,
-      webPreferences: {
-        contextIsolation: true,
-        nodeIntegration: false,
-        session: session.defaultSession
-      }
+    // Open internal browser via IPC
+    mainWindow.webContents.send('open-internal-browser', {
+      url: 'https://store.steampowered.com/login/',
+      partition: 'default' // Use default session for app auth
     });
-
-    authWin.loadURL('https://store.steampowered.com/login/');
 
     let checkInterval = null;
     let isResolving = false;
@@ -43,25 +36,25 @@ export function steamDirectLogin() {
           const steamId = steamLoginSecure.split('||')[0];
 
           if (!steamId || !/^\d{17}$/.test(steamId)) {
-            authWin.close();
+            mainWindow.webContents.send('close-internal-browser');
             return reject(new Error('Failed to extract valid SteamID from cookies'));
           }
 
           let webApiToken = null;
           try {
-            webApiToken = await fetchWebApiToken(authWin);
+            webApiToken = await fetchWebApiToken();
           } catch (e) {
             console.error('WebApiToken extraction error:', e);
-            authWin.close();
+            mainWindow.webContents.send('close-internal-browser');
             return reject(new Error('Не удалось получить webapi_token после входа: ' + e.message));
           }
 
           if (!webApiToken) {
-            authWin.close();
+            mainWindow.webContents.send('close-internal-browser');
             return reject(new Error('Не удалось получить webapi_token после входа'));
           }
 
-          authWin.close();
+          mainWindow.webContents.send('close-internal-browser');
           resolve({
             steamId,
             webApiToken,
@@ -76,30 +69,38 @@ export function steamDirectLogin() {
     // Start polling every 500ms
     checkInterval = setInterval(checkCookies, 500);
 
-    authWin.on('closed', () => {
-      if (checkInterval) {
-        clearInterval(checkInterval);
-      }
-      if (!isResolving) {
-        reject(new Error('Steam login window was closed'));
-      }
-    });
+    // If the browser is closed manually, we should reject the promise
+    // But currently internalBrowser doesn't have an IPC for "closed by user"
+    // that the main process can listen to easily without more wiring.
   });
 }
 
 /**
  * Fetches the webapi_token from Steam's async config endpoint.
- * Uses the current session cookies in the given BrowserWindow.
+ * Uses a hidden window to ensure we can execute script in the correct session.
  * 
- * @param {BrowserWindow} win 
  * @returns {Promise<string|null>}
  */
-async function fetchWebApiToken(win) {
-  const config = await win.webContents.executeJavaScript(`
-    fetch('/pointssummary/ajaxgetasyncconfig')
-      .then(r => r.json())
-  `);
-  
-  const token = config?.data?.webapi_token || config?.webapi_token || null;
-  return token;
+async function fetchWebApiToken() {
+  const win = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      session: session.defaultSession
+    }
+  });
+
+  try {
+    await win.loadURL('https://store.steampowered.com');
+    const config = await win.webContents.executeJavaScript(`
+      fetch('/pointssummary/ajaxgetasyncconfig')
+        .then(r => r.json())
+    `);
+    
+    const token = config?.data?.webapi_token || config?.webapi_token || null;
+    return token;
+  } finally {
+    win.close();
+  }
 }

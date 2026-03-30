@@ -9,12 +9,6 @@ contextBridge.exposeInMainWorld('electronAuth', {
   steamDirectLogin: () => ipcRenderer.invoke('auth:steam-direct'),
 
   /**
-   * Steam OpenID — opens system browser for Steam OpenID authentication
-   * @returns {Promise<{steamId: string, webApiToken: string, mode: string}>}
-   */
-  openIdLogin: () => ipcRenderer.invoke('auth:openid'),
-
-  /**
    * Listen for auth result events from main process
    * @param {Function} callback 
    */
@@ -118,6 +112,7 @@ contextBridge.exposeInMainWorld('electronAuth', {
   
   // App
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+  getGameBadge: (steamId, appId) => ipcRenderer.invoke('badge:get-game-badge', { steamId, appId }),
   onUpdateNotifyAvailable: (callback) => ipcRenderer.on('update:notify-available', (_event, info) => callback(info)),
   onUpdateNotifyDownloaded: (callback) => ipcRenderer.on('update:notify-downloaded', (_event, info) => callback(info)),
   onUpdateDownloading: (callback) => ipcRenderer.on('update:downloading', () => callback()),
@@ -126,6 +121,8 @@ contextBridge.exposeInMainWorld('electronAuth', {
 
   // Internal Browser
   onOpenBrowser: (callback) => ipcRenderer.on('open-internal-browser', (_event, url) => callback(url)),
+  onCloseBrowser: (callback) => ipcRenderer.on('close-internal-browser', (_event) => callback()),
+  clearSessions: () => ipcRenderer.invoke('auth:clear-sessions'),
 
   showInputContextMenu: () => ipcRenderer.send('show-input-context-menu'),
 });

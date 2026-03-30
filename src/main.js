@@ -62,6 +62,12 @@ async function main() {
   const splash = showSplash();
   const bar = document.querySelector('.splash-bar-fill');
 
+  // Initialize global custom UI elements needed for login
+  initTooltips();
+  initContextMenu();
+  initInternalBrowser();
+  initUpdaterNotification();
+
   // Initialize Authentication
   await store.initAuth();
   if (bar) bar.style.width = '30%';
@@ -171,12 +177,6 @@ async function main() {
   store.subscribe('theme', (themeMode) => {
     document.documentElement.setAttribute('data-theme', themeMode);
   });
-
-  // Initialize global custom UI elements
-  initTooltips();
-  initContextMenu();
-  initInternalBrowser();
-  initUpdaterNotification();
 
   // Global context menu for input fields
   document.addEventListener('contextmenu', (e) => {

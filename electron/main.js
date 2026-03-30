@@ -6,7 +6,7 @@ import * as idleManager from './idleManager.js';
 import achievementBridge from './achievementBridge.js';
 import cardsBridge from './cardsBridge.js';
 import { getLocalConfigPathExported } from './recentGames.js';
-import { refreshSteamCookies } from './utils/helpers.js';
+import { refreshSteamCookies, httpsGet } from './utils/helpers.js';
 
 // IPC Modules
 import { register as registerInventory }    from './ipc/inventory.js';
@@ -139,7 +139,6 @@ function createWindow() {
 // Register modules that don't depend on mainWindow first
 registerInventory(ipcMain);          // Must be before market
 registerMarket(ipcMain);
-registerAuth(ipcMain);
 registerCards(ipcMain);
 registerAchievements(ipcMain);
 registerIdle(ipcMain);
@@ -162,6 +161,7 @@ if (!gotTheLock) {
 
   app.whenReady().then(async () => {
     createWindow();
+    registerAuth(ipcMain, { mainWindow });
 
     // Setup Tray
     const iconPath = path.join(__dirname, '..', 'assets', 'icon.ico');
@@ -187,6 +187,66 @@ if (!gotTheLock) {
 
   // IPC for app version
   ipcMain.handle('app:get-version', () => app.getVersion());
+
+  ipcMain.handle('badge:get-game-badge', async (event, { steamId, appId }) => {
+    try {
+      const STEAM_API_KEY = '08FB1451659E540949A6AF2A3F5D99E5'
+      const data = await httpsGet({ hostname: 'api.steampowered.com', path: `/IPlayerService/GetBadges/v1/?key=${STEAM_API_KEY}&steamid=${steamId}` })
+      const json = JSON.parse(data.body)
+      const badges = json?.response?.badges ?? []
+
+      // Ищем значок по appid
+      const badge = badges.find(b => String(b.appid) === String(appId))
+
+      if (!badge) return { hasBadge: false }
+
+      const level = badge.level ?? 0
+      const xp = badge.xp ?? 0
+
+      // Получаем реальный iconurl через внутренний API с куками
+      const badgeInfoResp = await session.defaultSession.fetch(
+        `https://steamcommunity.com/profiles/${steamId}/ajaxgetbadgeinfo/${appId}`,
+        { headers: { 'Accept': 'application/json' } }
+      )
+      const badgeInfo = await badgeInfoResp.json()
+      const iconUrl = badgeInfo?.badgedata?.iconurl ?? null
+
+      // ПОЛУЧЕНИЕ ИМЕНИ ЗНАЧКА ЧЕРЕЗ HTML СТРАНИЦУ
+      let badgeName = null
+      try {
+        console.log(`[badge] Fetching real name from: https://steamcommunity.com/profiles/${steamId}/gamecards/${appId}?l=english`)
+        const pageResp = await session.defaultSession.fetch(
+          `https://steamcommunity.com/profiles/${steamId}/gamecards/${appId}?l=english`
+        )
+        const html = await pageResp.text()
+
+        // Ищем название текущего уровня значка в блоке badge_info_title
+        // Steam рендерит это как: <div class="badge_info_title">Employee of the Month</div>
+        const nameMatch = html.match(/<div class="badge_info_title">([^<]+)<\/div>/)
+        
+        if (nameMatch && nameMatch[1]) {
+          badgeName = nameMatch[1].trim()
+        } else {
+          // Запасной вариант: поиск в общем списке значков на странице
+          const fallbackMatch = html.match(/<div class="badge_title">\s*(.*?)\s*<\/div>/)
+          badgeName = fallbackMatch ? fallbackMatch[1].replace(/&nbsp;/g, '').trim() : null
+        }
+      } catch (err) {
+        console.error('[badge] HTML parse failed:', err.message)
+      }
+
+      // Если всё равно null, оставляем заглушку
+      if (!badgeName) badgeName = "Значок игры"
+
+      const isMaxLevel = level >= 5
+
+      console.log(`[badge] appId=${appId} level=${level} name=${badgeName}`)
+      return { hasBadge: true, level, xp, iconUrl, badgeName, isMaxLevel }
+    } catch (e) {
+      console.error('[badge] get-game-badge error:', e.message)
+      return { hasBadge: false }
+    }
+  })
 
   // Auto-updater only in packaged app
   if (app.isPackaged) {

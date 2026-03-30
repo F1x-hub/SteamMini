@@ -44,7 +44,6 @@ SteamMini/
 │   ├── preload.cjs              # Context Bridge: exposes `window.electronAuth` API
 │   ├── auth/
 │   │   ├── steamLogin.js        # Direct Steam login via BrowserWindow
-│   │   ├── openid.js            # Steam OpenID via system browser
 │   │   └── egsLogin.js          # Epic Games Store login via BrowserWindow (persist:egs)
 │   ├── idleManager.js           # Game idle process management (up to 32 concurrent)
 │   ├── idleWorker.js            # Worker subprocess for maintaining "in-game" status
@@ -176,7 +175,7 @@ Main (electron/) ──► ipcMain.handle('channel', handler)
 
 | Group | Channels | Purpose |
 |:---|:---|:---|
-| **Auth** | `auth:steam-direct`, `auth:openid` | Login flows |
+| **Auth** | `auth:steam-direct` | Login flows |
 | **Steam** | `steam:fetch-html`, `steam:is-installed`, `steam:get-all-installed`, `steam:get-cover-url`, `steam:redeem-key`, `steam:get-wallet` | Steam data & local files |
 | **Idle** | `idle:start`, `idle:stop`, `idle:stop-all`, `idle:active` | Game idle processes |
 | **Achievements** | `achievements:load`, `achievements:unlock`, `achievements:lock`, `achievements:unlock-all`, `achievements:close` | SAM-style achievement management |

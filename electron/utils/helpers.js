@@ -33,6 +33,11 @@ export function dedupe(key, promiseFn) {
 // ──────────────── HTTPS Get ────────────────
 
 export function httpsGet(options, body = null, maxRedirects = 3) {
+  // Нормализация: строка → объект
+  if (typeof options === 'string') {
+    const u = new URL(options)
+    options = { hostname: u.hostname, path: u.pathname + u.search }
+  }
   const label = `httpsGet ${options.hostname}${options.path?.substring(0, 50)}`;
   const t     = timer(label);
   return new Promise((resolve, reject) => {

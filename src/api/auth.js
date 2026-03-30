@@ -33,32 +33,6 @@ class AuthAPI {
   }
 
   /**
-   * Steam OpenID login via system browser.
-   * Gets SteamID64 from OpenID, then fetches webapi_token.
-   * @returns {Promise<Object>} credentials
-   */
-  async openIdLogin() {
-    if (!window.electronAuth) {
-      throw new Error('OpenID login is only available in Electron');
-    }
-
-    const result = await window.electronAuth.openIdLogin();
-
-    if (!result.success) {
-      throw new Error(result.error || 'OpenID login failed');
-    }
-
-    const credentials = {
-      steamId: result.data.steamId,
-      accessToken: result.data.webApiToken,
-      mode: 'openid'
-    };
-
-    storage.setEncrypted('steam_credentials', credentials);
-    return credentials;
-  }
-
-  /**
    * Manual login using user-provided keys.
    * @param {Object} params - Contains webApiKey, accessToken, steamId
    */
@@ -95,8 +69,15 @@ class AuthAPI {
     return credentials;
   }
 
-  logout() {
+  async logout() {
     storage.remove('steam_credentials');
+    if (window.electronAuth && window.electronAuth.clearSessions) {
+      try {
+        await window.electronAuth.clearSessions();
+      } catch (err) {
+        console.error('Failed to clear electron sessions:', err);
+      }
+    }
   }
 }
 

@@ -104,6 +104,20 @@ export function initInternalBrowser() {
   let historyStack = [];
   let historyIndex = -1;
 
+  function updateLayout() {
+    const isAuth = store.get('isAuthenticated');
+    if (isAuth) {
+      overlay.style.top = '82px';
+      overlay.style.height = 'calc(100vh - 82px)';
+    } else {
+      overlay.style.top = '0';
+      overlay.style.height = '100vh';
+    }
+  }
+
+  store.subscribe('isAuthenticated', updateLayout);
+  updateLayout(); // Initial call
+
   function updateNavButtons() {
     const canBack = historyIndex > 0;
     const canFwd = historyIndex < historyStack.length - 1;
@@ -199,42 +213,51 @@ export function initInternalBrowser() {
   store.subscribe('settingsOpen', updateWebviewVisibility);
 
   // ── Build/Rebuild Webview Based on Domain ─────────────────────────
-  function ensureCorrectPartition(url) {
+  function ensureCorrectPartition(url, forcedPartition = null) {
     const isEpi = url.includes('epicgames.com');
-    const targetPartition = isEpi ? 'persist:egs' : 'persist:steam';
-    const currentPartition = wv.getAttribute('partition');
+    // If forcedPartition is 'default', we want no partition attribute to use default session
+    const targetPartition = forcedPartition === 'default' ? '' : (forcedPartition || (isEpi ? 'persist:egs' : 'persist:steam'));
+    const currentPartition = wv.getAttribute('partition') || '';
 
     if (currentPartition !== targetPartition) {
       const newWv = document.createElement('webview');
       newWv.id = 'ib-webview';
-      newWv.setAttribute('partition', targetPartition);
+      if (targetPartition) {
+        newWv.setAttribute('partition', targetPartition);
+      }
       newWv.style.cssText = 'flex: 1; width: 100%; border: none;';
       newWv.setAttribute('allowpopups', '');
-      newWv.src = 'about:blank';
       
       wv.replaceWith(newWv);
       wv = newWv;
       attachWebviewEvents(wv);
       updateWebviewVisibility();
-      console.log(`[InternalBrowser] Rebuilt webview with partition: ${targetPartition}`);
+      console.log(`[InternalBrowser] Rebuilt webview with partition: ${targetPartition || 'default'}`);
     }
   }
 
   // ── Open / Close ──────────────────────────────────────────────────
-  function open(url) {
+  function open(url, partition = null) {
     store.set('profilePopupOpen', false);
     store.set('settingsOpen', false);
 
-    ensureCorrectPartition(url);
+    ensureCorrectPartition(url, partition);
 
     historyStack = [];
     historyIndex = -1;
     currentUrl = url;
     urlInput.value = url;
-    wv.src = url;
     
+    // 1. First make the overlay visible so webview can calculate its size
     store.set('isBrowserOpen', true);
-    updateNavButtons();
+    
+    // 2. Load URL in next tick to avoid black screen / initialization issues
+    setTimeout(() => {
+        if (wv) {
+            wv.src = url;
+            updateNavButtons();
+        }
+    }, 50);
   }
 
   function close() {
@@ -263,9 +286,20 @@ export function initInternalBrowser() {
 
   // ── Listen for IPC event ──────────────────────────────────────────
   if (window.electronAuth && window.electronAuth.onOpenBrowser) {
-    window.electronAuth.onOpenBrowser((url) => {
-      open(url);
+    window.electronAuth.onOpenBrowser((data) => {
+      if (typeof data === 'string') {
+        open(data);
+      } else if (data && data.url) {
+        open(data.url, data.partition);
+      }
     });
+
+    // Listen for close event
+    if (window.electronAuth.onCloseBrowser) {
+        window.electronAuth.onCloseBrowser(() => {
+            close();
+        });
+    }
   }
 }
 
