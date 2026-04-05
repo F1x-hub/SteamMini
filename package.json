@@ -1,6 +1,6 @@
 {
   "name": "steammini",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "",
   "main": "electron/main.js",
   "scripts": {
@@ -39,6 +39,7 @@
     "electron-log": "^5.1.2",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.1.7",
+    "lucide": "^1.7.0",
     "steamcommunity": "^3.49.0",
     "steamworks.js": "^0.4.0",
     "vdf-parser": "^1.2.1",
