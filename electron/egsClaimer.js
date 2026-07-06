@@ -178,12 +178,12 @@ async function pollUntilOrdered(win, { intervalMs = 2000, timeoutMs = 40000 } = 
       const elapsed = Date.now() - clickedAt;
       const matchText = await checkOrderSuccess(win);
       if (matchText) {
-        console.log(`[EGS Claim] ✅ Order confirmed after ${elapsed}ms`);
+        console.log(`[EGS Claim] [OK] Order confirmed after ${elapsed}ms`);
         return { success: true, msg: 'Order placed and confirmed' };
       }
       const iframeNavigated = await checkIframeNavigated(win);
       if (iframeNavigated) {
-        console.log(`[EGS Claim] ✅ Checkout iframe navigated (order likely completed) after ${elapsed}ms`);
+        console.log(`[EGS Claim] [OK] Checkout iframe navigated (order likely completed) after ${elapsed}ms`);
         return { success: true, msg: 'Order placed (iframe navigated)' };
       }
       if (elapsed > 20000 && !clicked) {

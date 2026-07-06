@@ -226,9 +226,9 @@ export function createTopNav() {
 
   // Track User changes
   const onUserUpdate = (user) => {
-    // Select elements from the document to avoid stale references if the nav is re-rendered
-    const nameEl = document.querySelector('.top-nav .user-name');
-    const avatarEl = document.querySelector('.top-nav .avatar-placeholder');
+    // Select elements from the nav to avoid stale/missing references before DOM attachment
+    const nameEl = nav.querySelector('.user-name');
+    const avatarEl = nav.querySelector('.avatar-placeholder');
     
     if (!nameEl || !avatarEl) return;
 

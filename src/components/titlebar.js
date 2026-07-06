@@ -7,6 +7,12 @@ export function createTitlebar() {
   titlebar.innerHTML = `
     <div class="titlebar-drag-region"></div>
     <div class="titlebar-controls">
+      <button class="win-btn update-btn" id="titlebar-update-btn" aria-label="Установить обновление" style="display:none; width:46px;">
+        <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" width="14" height="14">
+          <path d="M8 2v8M8 10l-3-3M8 10l3-3" stroke="#22c55e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M2 12h12" stroke="#22c55e" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
       <button class="win-btn minimize-btn" aria-label="Minimize">
         <svg viewBox="0 0 10 1" stroke="currentColor" stroke-width="1.5"><path d="M0 0.5h10"/></svg>
       </button>
@@ -19,7 +25,6 @@ export function createTitlebar() {
     </div>
   `;
 
-  // Provide styles
   const style = document.createElement('style');
   style.textContent = `
     .custom-titlebar {
@@ -56,19 +61,30 @@ export function createTitlebar() {
       transition: background-color var(--transition-fast), color var(--transition-fast);
       cursor: pointer;
     }
-    .win-btn svg {
-      width: 10px;
-      height: 10px;
+    .win-btn svg { width: 10px; height: 10px; }
+    .win-btn:hover { background-color: var(--color-bg-surface-light); color: var(--color-text-primary); }
+    .win-btn.close-btn:hover { background-color: var(--color-danger); color: white; }
+
+    /* Кнопка обновления */
+    .win-btn.update-btn svg { width: 14px; height: 14px; }
+    .win-btn.update-btn {
+      position: relative;
+      animation: update-pulse 2s ease-in-out infinite;
     }
-    .win-btn:hover {
-      background-color: var(--color-bg-surface-light);
-      color: var(--color-text-primary);
+    .win-btn.update-btn:hover { background-color: rgba(34, 197, 94, 0.15); }
+    .win-btn.update-btn::after {
+      content: '';
+      position: absolute;
+      bottom: 4px;
+      width: 4px; height: 4px;
+      background: #22c55e;
+      border-radius: 50%;
     }
-    .win-btn.close-btn:hover {
-      background-color: var(--color-danger);
-      color: white;
+    @keyframes update-pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.6; }
     }
-    
+
     .close-prompt-overlay {
       position: fixed; top: 0; left: 0; right: 0; bottom: 0;
       background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
@@ -79,20 +95,47 @@ export function createTitlebar() {
       background: var(--color-bg-surface);
       border: 1px solid var(--color-border);
       border-radius: var(--radius-md);
-      padding: 24px;
-      width: 320px;
+      padding: 24px; width: 320px;
       box-shadow: var(--shadow-lg);
     }
     .close-prompt-content h3 { margin: 0 0 12px 0; font-size: 1.15rem; color: var(--color-text-primary); text-align: center; }
-    .close-prompt-content p { font-size: 0.9rem; color: var(--color-text-secondary); text-align: center; margin-bottom: 20px; }
+    .close-prompt-content p  { font-size: 0.9rem; color: var(--color-text-secondary); text-align: center; margin-bottom: 20px; }
     .close-prompt-actions { display: flex; flex-direction: column; gap: 10px; }
     .btn-danger {
-      background: rgba(255, 255, 255, 0.05); color: var(--color-text-primary); border: 1px solid var(--color-border); font-weight: 500; border-radius: var(--radius-sm); padding: 8px 16px; cursor: pointer;
+      background: rgba(255,255,255,0.05); color: var(--color-text-primary);
+      border: 1px solid var(--color-border); font-weight: 500;
+      border-radius: var(--radius-sm); padding: 8px 16px; cursor: pointer;
     }
     .btn-danger:hover { background: var(--color-danger); border-color: var(--color-danger); color: white; }
   `;
   titlebar.appendChild(style);
 
+  // ── Update button logic ──
+  const updateBtn = titlebar.querySelector('#titlebar-update-btn');
+  let updateReady = false;
+
+  if (window.electronAuth) {
+    // Обновление скачано — показать кнопку
+    window.electronAuth.onUpdateDownloaded?.(() => {
+      updateReady = true;
+      updateBtn.style.display = 'flex';
+      updateBtn.title = 'Обновление готово — нажмите для установки';
+    });
+
+    // Клик — установить и перезапустить
+    updateBtn.addEventListener('click', () => {
+      if (!updateReady) return;
+      window.electronAuth.installUpdate?.();
+    });
+
+    // Применить настройку autoDownload при старте
+    const prefs = storage.get('preferences') || {};
+    if (prefs.autoDownloadUpdates) {
+      window.electronAuth.setAutoDownload?.(true);
+    }
+  }
+
+  // ── Close prompt ──
   function showClosePrompt() {
     const overlay = document.createElement('div');
     overlay.className = 'close-prompt-overlay';
@@ -101,63 +144,37 @@ export function createTitlebar() {
         <h3>Закрытие SteamMini</h3>
         <p>Как вы хотите, чтобы приложение вело себя при закрытии?</p>
         <div class="close-prompt-actions">
-          <button id="btn-minimize-tray" class="btn-primary" style="padding: 8px 16px; border-radius: var(--radius-sm); border: none; font-weight: 500; cursor: pointer;">Свернуть в трей</button>
+          <button id="btn-minimize-tray" class="btn-primary" style="padding:8px 16px;border-radius:var(--radius-sm);border:none;font-weight:500;cursor:pointer;">Свернуть в трей</button>
           <button id="btn-quit-app" class="btn-danger">Закрыть полностью</button>
         </div>
-        <p style="font-size: 11px; margin-top: 15px; margin-bottom: 0; color: var(--color-text-secondary); text-align: center;">Этот выбор можно изменить в настройках профиля.</p>
+        <p style="font-size:11px;margin-top:15px;margin-bottom:0;color:var(--color-text-secondary);text-align:center;">Этот выбор можно изменить в настройках профиля.</p>
       </div>
     `;
     document.body.appendChild(overlay);
 
-    const saveBehavior = (behavior) => {
+    const saveBehavior = (b) => {
       const prefs = storage.get('preferences') || {};
-      prefs.closeBehavior = behavior;
+      prefs.closeBehavior = b;
       storage.set('preferences', prefs);
     };
 
-    overlay.querySelector('#btn-minimize-tray').addEventListener('click', () => {
-      saveBehavior('tray');
-      window.electronAuth.hideWindow();
-      overlay.remove();
-    });
-    overlay.querySelector('#btn-quit-app').addEventListener('click', () => {
-      saveBehavior('quit');
-      window.electronAuth.quitApp();
-      overlay.remove();
-    });
-
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) overlay.remove(); 
-    });
+    overlay.querySelector('#btn-minimize-tray').addEventListener('click', () => { saveBehavior('tray'); window.electronAuth.hideWindow(); overlay.remove(); });
+    overlay.querySelector('#btn-quit-app').addEventListener('click',      () => { saveBehavior('quit'); window.electronAuth.quitApp();   overlay.remove(); });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   }
 
-  // Bind Events
   if (window.electronAuth) {
     const handleClose = () => {
       const prefs = storage.get('preferences') || {};
-      if (prefs.closeBehavior === 'tray') {
-        window.electronAuth.hideWindow();
-      } else if (prefs.closeBehavior === 'quit') {
-        window.electronAuth.quitApp();
-      } else {
-        if (!document.querySelector('.close-prompt-overlay')) {
-          showClosePrompt();
-        }
-      }
+      if (prefs.closeBehavior === 'tray')      window.electronAuth.hideWindow();
+      else if (prefs.closeBehavior === 'quit') window.electronAuth.quitApp();
+      else if (!document.querySelector('.close-prompt-overlay')) showClosePrompt();
     };
 
-    titlebar.querySelector('.minimize-btn').addEventListener('click', () => {
-      window.electronAuth.minimizeWindow();
-    });
-    titlebar.querySelector('.maximize-btn').addEventListener('click', () => {
-      window.electronAuth.maximizeWindow();
-    });
+    titlebar.querySelector('.minimize-btn').addEventListener('click', () => window.electronAuth.minimizeWindow());
+    titlebar.querySelector('.maximize-btn').addEventListener('click', () => window.electronAuth.maximizeWindow());
     titlebar.querySelector('.close-btn').addEventListener('click', handleClose);
-    
-    // Also listen to Alt+F4 or native close requests
-    if (window.electronAuth.onCloseRequested) {
-      window.electronAuth.onCloseRequested(handleClose);
-    }
+    if (window.electronAuth.onCloseRequested) window.electronAuth.onCloseRequested(handleClose);
   }
 
   return titlebar;

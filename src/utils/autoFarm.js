@@ -1,3 +1,4 @@
+import { icons } from './icons.js';
 import store from '../store/index.js';
 import steamApi from '../api/steam.js';
 import toast from './toast.js';
@@ -98,10 +99,14 @@ class AutoFarm {
     }
 
     this.isActive = true;
+    if (window.electronAuth && window.electronAuth.farmStartPlaytimeRefresh) {
+      window.electronAuth.farmStartPlaytimeRefresh();
+    }
     this._startCountdown();
     this._runMainLoop();
     
-    toast.show('▶ Авто-фарм запущен (IME Fast Mode)', 'success');
+    toast.show(`${icons.play} Авто-фарм запущен (IME Fast Mode)`, 'success');
+
     this._notifyStateChange();
   }
 
@@ -129,10 +134,20 @@ class AutoFarm {
 
         await this._waitWithTick(config.phase1_duration_ms);
         
-        // Остановить все
+        // Сбросить фазу ДО остановки игр
+        this.phase = null;
+        this._notifyStateChange();
+
+        // Остановить все — теперь await корректно ждёт завершения
         if (this.currentLoopGames.length > 0) {
-          await Promise.all(this.currentLoopGames.map(game => window.electronAuth.idleStop(game.appid)));
+          await Promise.all(
+            this.currentLoopGames.map(game => window.electronAuth.idleStop(game.appid))
+          );
         }
+
+        // Очистить batch чтобы не светились в UI во время refresh
+        this.currentLoopGames = [];
+        this._notifyStateChange();
 
         if (!this.isActive) break;
 
@@ -186,7 +201,7 @@ class AutoFarm {
     } else {
        // Loop ended because no more eligible games
        this.stop();
-       toast.show('🎉 Авто-фарм завершён! Все карточки получены.', 'success');
+       toast.show(`${icons.star} Авто-фарм завершён! Все карточки получены.`, 'success');
        if (this._settings?.notifications?.onFarmComplete && window.electronAuth?.notifyFarmComplete) {
          window.electronAuth.notifyFarmComplete(this._totalSessionDrops || 0);
        }
@@ -294,6 +309,9 @@ class AutoFarm {
     if (!this.isActive) return;
 
     this.isActive = false;
+    if (window.electronAuth && window.electronAuth.farmStopPlaytimeRefresh) {
+      window.electronAuth.farmStopPlaytimeRefresh();
+    }
     if (this._cancelLoop) {
       this._cancelLoop();
       this._cancelLoop = null;
@@ -314,7 +332,7 @@ class AutoFarm {
       try { await window.electronAuth.idleStop(this.currentLoopGames[this.currentIndex].appid); } catch(e){}
     }
 
-    toast.show('⏸ Фарм приостановлен', 'info');
+    toast.show(`${icons.pause} Фарм приостановлен`, 'info');
     this._notifyStateChange();
   }
 
@@ -322,15 +340,21 @@ class AutoFarm {
     if (this.isActive || this.eligibleGames.length === 0) return;
     
     this.isActive = true;
+    if (window.electronAuth && window.electronAuth.farmStartPlaytimeRefresh) {
+      window.electronAuth.farmStartPlaytimeRefresh();
+    }
     this._startCountdown();
     this._runMainLoop();
     
-    toast.show('▶ Фарм возобновлён', 'success');
+    toast.show(`${icons.play} Фарм возобновлён`, 'success');
     this._notifyStateChange();
   }
 
   async stop() {
     this.isActive = false;
+    if (window.electronAuth && window.electronAuth.farmStopPlaytimeRefresh) {
+      window.electronAuth.farmStopPlaytimeRefresh();
+    }
     if (this._cancelLoop) {
       this._cancelLoop();
       this._cancelLoop = null;
@@ -443,6 +467,24 @@ class AutoFarm {
 
       gamesMetadata,
     });
+
+    // Derive farmingGames list for the farmingIndicator component
+    let farmingGames = [];
+    if (this.isActive && this.phase) {
+      if (this.phase === 'simultaneous') {
+        farmingGames = this.currentLoopGames.map(g => ({
+          appId: g.appid,
+          name: g.name,
+          phase: 1,
+        }));
+      } else if (this.phase === 'sequential' && this.currentSequentialAppId) {
+        const activeGame = this.currentLoopGames.find(g => g.appid === this.currentSequentialAppId);
+        if (activeGame) {
+          farmingGames = [{ appId: activeGame.appid, name: activeGame.name, phase: 2 }];
+        }
+      }
+    }
+    store.set('farmingGames', farmingGames);
   }
 }
 

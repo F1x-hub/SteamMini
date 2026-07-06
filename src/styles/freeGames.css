@@ -1,0 +1,129 @@
+/* src/styles/freeGames.css */
+.free-games-page {
+  padding: var(--spacing-lg) var(--spacing-xl);
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.free-games-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 20px;
+}
+.free-games-header h2 {
+  color: var(--color-text-primary);
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+}
+.free-games-refresh-btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  transition: border-color 0.2s, color 0.2s;
+}
+.free-games-refresh-btn:hover {
+  border-color: var(--color-text-secondary);
+  color: var(--color-text-primary);
+}
+.free-games-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.free-game-card {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.15s;
+}
+.free-game-card:hover {
+  border-color: var(--color-accent-green);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover);
+}
+.free-game-card-img {
+  width: 100%;
+  height: 160px;
+  overflow: hidden;
+}
+.free-game-card-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.free-game-card-placeholder {
+  width: 100%;
+  height: 160px;
+  background: var(--color-bg-base);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+}
+.free-game-card-body {
+  padding: 14px;
+}
+.free-game-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  gap: 6px;
+}
+.free-game-platform {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-base);
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.free-game-badge {
+  font-size: 11px;
+  color: var(--color-accent-green);
+  font-weight: 700;
+  background: rgba(34, 197, 94, 0.15);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+.free-game-title {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.free-game-original-price {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  text-decoration: line-through;
+  margin-bottom: 4px;
+}
+.free-game-end-date {
+  color: var(--color-warning);
+  font-size: 11px;
+}
+.free-games-loading,
+.free-games-error,
+.free-games-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 40px;
+  font-size: 14px;
+}
+.free-games-loading { color: var(--color-text-secondary); }
+.free-games-error   { color: var(--color-danger); }
+.free-games-empty   { color: var(--color-text-secondary); }

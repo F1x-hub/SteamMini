@@ -11,7 +11,7 @@ const log = require('electron-log');
 function setupAutoUpdater(mainWindow) {
   // Логировать обновления через electron-log
   autoUpdater.logger = log;
-  autoUpdater.autoDownload = false;          // скачивать только с подтверждения
+  autoUpdater.autoDownload = false; // управляется из UI
   autoUpdater.autoInstallOnAppQuit = true;
 
   // Проверить обновление при старте (через 3 сек чтобы окно успело открыться)
@@ -22,6 +22,11 @@ function setupAutoUpdater(mainWindow) {
   // ── Найдено обновление — спросить UI ──
   autoUpdater.on('update-available', (info) => {
     mainWindow.webContents.send('update:notify-available', info);
+    // Если autoDownload включён — скачиваем сразу
+    if (autoUpdater.autoDownload) {
+      autoUpdater.downloadUpdate();
+      mainWindow.webContents.send('update:downloading');
+    }
   });
 
   // ── Нет обновлений ──
@@ -95,6 +100,11 @@ function setupAutoUpdater(mainWindow) {
   // ── IPC — установить после скачивания ──
   ipcMain.handle('update:install', () => {
     autoUpdater.quitAndInstall(true, true);
+  });
+
+  ipcMain.handle('update:set-auto-download', (event, enabled) => {
+    autoUpdater.autoDownload = enabled;
+    log.info('[Updater] autoDownload set to:', enabled);
   });
 }
 

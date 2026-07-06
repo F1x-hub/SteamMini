@@ -1,3 +1,4 @@
+import { icons } from '../utils/icons.js';
 import store from '../store/index.js';
 
 export function renderLogin() {
@@ -12,7 +13,8 @@ export function renderLogin() {
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
+      flex: 1;
+      height: 100%;
       background: var(--color-bg-base);
       position: relative;
       overflow: hidden;
@@ -367,7 +369,7 @@ export function renderLogin() {
     <div class="login-logo">
       <span class="login-logo-icon">
         <div style="width:14px;height:14px;border-radius:50%;background-color:var(--color-text-accent); display:inline-block; margin-right:4px;"></div>
-        🎮
+        ${icons.game}
       </span>
       <h1>GameController</h1>
       <p>Подключите аккаунт Steam</p>
@@ -378,7 +380,7 @@ export function renderLogin() {
     ${isElectron ? `
       <div class="auth-buttons">
         <button class="auth-btn auth-btn--primary" id="btn-steam-direct">
-          <span class="auth-btn-icon">🔑</span>
+          <span class="auth-btn-icon">${icons.key}</span>
           <span class="auth-btn-text">
             <span class="auth-btn-title">Войти через Steam</span>
             <span class="auth-btn-subtitle">Логин / пароль / QR-код</span>
@@ -391,7 +393,7 @@ export function renderLogin() {
     ` : ''}
 
     <button class="manual-toggle" id="manual-toggle">
-      <span>⚙️ Ручной ввод</span>
+      <span>${icons.settings} Ручной ввод</span>
       <span class="manual-toggle-arrow" id="toggle-arrow">▼</span>
     </button>
 
@@ -411,6 +413,33 @@ export function renderLogin() {
   `;
 
   container.appendChild(card);
+
+  const gearBtn = document.createElement('button');
+  gearBtn.className = 'login-settings-btn';
+  gearBtn.innerHTML = icons.settings;
+  gearBtn.style.position = 'absolute';
+  gearBtn.style.top = '1.25rem';
+  gearBtn.style.right = '1.5rem';
+  gearBtn.style.background = 'transparent';
+  gearBtn.style.border = 'none';
+  gearBtn.style.fontSize = '1.4rem';
+  gearBtn.style.cursor = 'pointer';
+  gearBtn.style.color = 'var(--color-text-secondary)';
+  gearBtn.style.transition = 'color 0.2s, transform 0.2s';
+  gearBtn.style.zIndex = '10';
+  gearBtn.title = 'Настройки';
+  gearBtn.onmouseover = () => {
+    gearBtn.style.color = 'var(--color-text-primary)';
+    gearBtn.style.transform = 'rotate(30deg)';
+  };
+  gearBtn.onmouseout = () => {
+    gearBtn.style.color = 'var(--color-text-secondary)';
+    gearBtn.style.transform = 'rotate(0deg)';
+  };
+  gearBtn.onclick = () => {
+    store.set('settingsOpen', true);
+  };
+  container.appendChild(gearBtn);
 
   // ─── Event Handlers ───
 

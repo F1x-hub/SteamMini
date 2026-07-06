@@ -10,7 +10,7 @@ export function timer(label) {
   return {
     end: (extra = '') => {
       const ms = Date.now() - start;
-      const icon = ms < 500 ? '✅' : ms < 2000 ? '⚠️' : '🐢';
+      const icon = ms < 500 ? '[OK]' : ms < 2000 ? '[WARN]' : '[SLOW]';
       console.log(`${icon} [TIMER] ${label}: ${ms}ms ${extra}`);
       return ms;
     }
@@ -100,13 +100,47 @@ export function httpsGet(options, body = null, maxRedirects = 3) {
 
 export async function refreshSteamCookies() {
   const t = timer('refreshSteamCookies');
+
+  // ── Проверяем store.steampowered.com ──────────────────────────────
+  const storeCookies = await session.defaultSession.cookies.get({
+    domain: 'store.steampowered.com',
+    name: 'steamLoginSecure'
+  });
+  const storeLoginSecure = storeCookies.find(c => c.name === 'steamLoginSecure' && c.value);
+
+  if (storeLoginSecure) {
+    const val = decodeURIComponent(storeLoginSecure.value);
+    const steamId = val.split('||')[0];
+    if (steamId && /^\d{17}$/.test(steamId)) {
+      // Копируем куку на steamcommunity.com
+      try {
+        await session.defaultSession.cookies.set({
+          url: 'https://steamcommunity.com',
+          name: 'steamLoginSecure',
+          value: storeLoginSecure.value,
+          domain: '.steamcommunity.com',
+          path: '/',
+          secure: true,
+          httpOnly: true,
+          sameSite: 'no_restriction',
+        });
+        console.log('[Cookies] Synced steamLoginSecure from store → community');
+      } catch (e) {
+        console.warn('[Cookies] Sync failed:', e.message);
+      }
+      t.end();
+      return;
+    }
+  }
+
+  // ── Кука не найдена — открываем скрытое окно ─────────────────────
   return new Promise((resolve) => {
     console.log('[Cookies] Opening hidden window to refresh Steam cookies...');
 
     const win = new BrowserWindow({
-      show:            false,
-      width:           1,
-      height:          1,
+      show:           false,
+      width:          1,
+      height:         1,
       webPreferences: {
         nodeIntegration:  false,
         contextIsolation: true,
@@ -115,7 +149,6 @@ export async function refreshSteamCookies() {
     });
 
     let resolved = false;
-
     const done = () => {
       if (resolved) return;
       resolved = true;
@@ -138,6 +171,24 @@ export async function refreshSteamCookies() {
                  'Chrome/120.0.0.0 Safari/537.36'
     });
   });
+}
+
+// ──────────────── Steam Fetch with Auto-Retry ────────────────
+
+/**
+ * Wrapper around session.defaultSession.fetch that auto-refreshes
+ * cookies on 302/401 and retries the request once.
+ */
+export async function steamFetchWithRetry(url, options = {}, retried = false) {
+  const res = await session.defaultSession.fetch(url, options);
+
+  if ((res.status === 302 || res.status === 401) && !retried) {
+    console.log(`[Session] Got ${res.status} for ${url}, refreshing cookies and retrying...`);
+    await refreshSteamCookies();
+    return steamFetchWithRetry(url, options, true);
+  }
+
+  return res;
 }
 
 // ──────────────── Steam Cookies ────────────────

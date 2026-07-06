@@ -31,3 +31,11 @@ Thumbs.db
 **/bin/
 **/obj/
 
+# AI / Docs
+CLAUDE.md
+DOCUMENTATION.md
+AGENTS.md
+AGENT.md
+.gemini/
+
+

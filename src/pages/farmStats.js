@@ -1,3 +1,5 @@
+import { icons } from '../utils/icons.js';
+
 export function renderFarmStats() {
   const container = document.createElement('div');
   container.className = 'farm-stats-page';
@@ -37,7 +39,7 @@ export function renderFarmStats() {
       historyHtml = stats.history.map(({ date, count }) => `
         <div style="display: flex; justify-content: space-between; padding: 12px 16px; background: var(--color-bg-surface); border-radius: 8px; border: 1px solid var(--color-border); margin-bottom: 8px;">
           <span style="color: var(--color-text-secondary); font-weight: 500;">${new Date(date).toLocaleDateString()}</span>
-          <span style="color: var(--color-success); font-weight: 600;">🃏 ${count}</span>
+          <span style="color: var(--color-success); font-weight: 600;">${icons.layers} ${count}</span>
         </div>
       `).join('');
     } else {

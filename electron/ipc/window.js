@@ -8,10 +8,14 @@ import { isAppQuitting } from '../main.js';
  */
 export function register(ipcMain, { mainWindow }) {
   ipcMain.on('open-external', (event, url) => {
-    if (url.startsWith('steam://')) {
-      shell.openExternal(url);
-    } else if (mainWindow) {
-      mainWindow.webContents.send('open-internal-browser', url);
+    try {
+      if (url.startsWith('steam://') || url.includes('gg.deals')) {
+        shell.openExternal(url);
+      } else if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('open-internal-browser', url);
+      }
+    } catch (err) {
+      console.error('[Window] Failed to route external URL:', err);
     }
   });
 

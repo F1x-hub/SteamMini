@@ -49,12 +49,33 @@ export async function startGame(appId) {
 export async function stopGame(appId) {
   const appIdStr = appId.toString();
   const child = activeIdles.get(appIdStr);
-  
+
   if (child) {
-    child.kill('SIGTERM'); // Politely ask child process to exit
+    try {
+      // Сначала пробуем мягко через IPC — воркер сам вызовет process.exit()
+      child.send({ cmd: 'stop' });
+    } catch (e) {
+      // Если IPC недоступен — force kill
+    }
+
+    // Даём 1 секунду на мягкое завершение, потом принудительно
+    await new Promise(resolve => {
+      const forceKillTimer = setTimeout(() => {
+        if (activeIdles.has(appIdStr)) {
+          child.kill(); // TerminateProcess на Windows
+        }
+        resolve();
+      }, 1000);
+
+      child.once('exit', () => {
+        clearTimeout(forceKillTimer);
+        resolve();
+      });
+    });
+
     activeIdles.delete(appIdStr);
   }
-  
+
   return { success: true };
 }
 
@@ -64,7 +85,8 @@ export async function getActiveIdles() {
 
 export function stopAll() {
   for (const [appId, child] of activeIdles.entries()) {
-    child.kill('SIGTERM');
+    try { child.send({ cmd: 'stop' }); } catch (e) {}
+    child.kill();
   }
   activeIdles.clear();
 }

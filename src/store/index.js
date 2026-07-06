@@ -1,6 +1,7 @@
 import authApi from '../api/auth.js';
 import storage from '../utils/storage.js';
 import steamApi from '../api/steam.js';
+import logger from '../utils/logger.js';
 
 // Init preferences gracefully
 const prefs = storage.get('preferences') || { theme: 'dark', lang: 'en' };
@@ -24,7 +25,8 @@ const state = {
   lang: prefs.lang,
   farmConfig: farmCfg,
   previousRoute: null,
-  runningAppId: null
+  runningAppId: null,
+  farmingGames: [], // [{ appId, name, phase }] — currently farmed games
 };
 
 class Store {
@@ -112,7 +114,8 @@ class Store {
           name: player.personaname,
           avatar: player.avatarfull,
           profileUrl: player.profileurl,
-          steamId: steamId
+          steamId: steamId,
+          country: player.loccountrycode || 'GE'
         });
         return;
       }
@@ -195,12 +198,45 @@ class Store {
       throw e;
     }
   }
+  async logout() {
+    logger.info('[Store] Starting logout process...');
+    
+    // ── Safe Redirection ──
+    // We use the absolute base URL saved during app initialization to ensure 
+    // we back to a valid page, even if History API mangled the current location.
+    // Read this BEFORE authApi.logout() in case of storage permission issues during clearing.
+    const savedBaseUrl = localStorage.getItem('app_base_url');
 
-  logout() {
-    authApi.logout();
+    try {
+      await authApi.logout();
+      logger.info('[Store] authApi.logout() successful');
+    } catch (err) {
+      logger.error('[Store] authApi.logout() failed:', err);
+    }
+
     this.set('auth', null);
     this.set('isAuthenticated', false);
     this.set('user', null);
+    logger.info('[Store] State cleared');
+    
+    if (savedBaseUrl) {
+      logger.info('[Store] Redirecting to saved base URL:', savedBaseUrl);
+      window.location.href = savedBaseUrl;
+    } else {
+      logger.warn('[Store] app_base_url not found in storage, using fallbacks');
+      if (window.location.protocol === 'file:') {
+        // Fallback for Electron production if storage is empty
+        const currentHref = window.location.href;
+        if (currentHref.includes('index.html')) {
+          window.location.href = currentHref.split('index.html')[0] + 'index.html';
+        } else {
+          window.location.href = 'index.html'; 
+        }
+      } else {
+        // Fallback for Dev
+        window.location.href = '/';
+      }
+    }
   }
 }
 

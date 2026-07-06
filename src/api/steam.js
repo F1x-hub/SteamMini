@@ -2,7 +2,7 @@ import authApi from './auth.js';
 import cache from '../utils/cache.js';
 import { CACHE_TTL } from '../utils/cacheTTL.js';
 
-const GLOBAL_API_KEY = "08FB1451659E540949A6AF2A3F5D99E5"; // <-- Вставьте ваш WebAPI ключ сюда
+const GLOBAL_API_KEY = import.meta.env.VITE_STEAM_API_KEY || "08FB1451659E540949A6AF2A3F5D99E5";
 
 class SteamAPI {
   constructor() {
@@ -297,6 +297,43 @@ class SteamAPI {
       return null;
     } catch (e) {
       console.error(`[SteamAPI getAppDetails] Failed for appId ${appId}:`, e);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch a lightweight achievement summary for a game.
+   * Returns only total/unlocked counts to avoid loading the full achievement payload.
+   */
+  async getAchievementSummary(appId) {
+    const cacheKey = `achievement_summary_${appId}`;
+    const cachedData = cache.get(cacheKey);
+    if (cachedData) return cachedData;
+
+    const { steamId } = await this._getCredentials();
+    if (!steamId) return null;
+
+    try {
+      const data = await this._fetch('/ISteamUserStats/GetPlayerAchievements/v1/', false, {
+        steamid: steamId,
+        appid: appId,
+        l: 'russian'
+      });
+
+      const achievements = data?.playerstats?.achievements || [];
+      if (!Array.isArray(achievements) || achievements.length === 0) {
+        return null;
+      }
+
+      const result = {
+        total: achievements.length,
+        unlocked: achievements.filter((achievement) => achievement.achieved).length,
+      };
+
+      cache.set(cacheKey, result, CACHE_TTL.BADGES);
+      return result;
+    } catch (e) {
+      console.warn(`[SteamAPI getAchievementSummary] Failed for ${appId}:`, e.message);
       return null;
     }
   }

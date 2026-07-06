@@ -1,29 +1,83 @@
+import { icons } from '../utils/icons.js';
 import steamApi from '../api/steam.js';
 import autoFarm from '../utils/autoFarm.js';
 import store from '../store/index.js';
 import router from '../router/index.js';
 import { renderFarmStats } from './farmStats.js';
 import { renderFarmSettings } from './farmSettings.js';
+import { cacheGet, cacheSet, TTL } from '../cache/pageCache.js';
+import { getAll } from '../services/hltbCache.js';
+import { initFarmingIndicator } from '../components/farmingIndicator.js';
 
 export async function renderLibrary() {
   const container = document.createElement('div');
   container.className = 'page-container library-page';
   
-  container.innerHTML = `<div class="loading">
-    <div class="skeleton-item" style="height:40px;margin-bottom:12px;"></div>
-    <div class="skeleton-item" style="height:24px;width:60%;margin-bottom:20px;"></div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;">
-      ${Array(12).fill('<div class="skeleton-item" style="height:80px;"></div>').join('')}
-    </div>
-  </div>`;
+  const cacheKey = 'library:ownedGames';
+  const cachedGames = cacheGet(cacheKey, TTL.LIBRARY);
+  let games = [];
+
+  if (!cachedGames) {
+    container.innerHTML = `<div class="loading">
+      <div class="skeleton-item" style="height:40px;margin-bottom:12px;"></div>
+      <div class="skeleton-item" style="height:24px;width:60%;margin-bottom:20px;"></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;">
+        ${Array(12).fill('<div class="skeleton-item" style="height:80px;"></div>').join('')}
+      </div>
+    </div>`;
+  } else {
+    container.innerHTML = '';
+  }
 
   try {
-    const data = await steamApi.getOwnedGames();
-    const games = data?.response?.games || [];
+    if (cachedGames) {
+      games = [...cachedGames]; // kopiya chtoby ne mutirovat kesh napryamuyu
+
+      steamApi.getOwnedGames().then(freshData => {
+        const freshGames = freshData?.response?.games || [];
+        if (freshGames.length > 0) {
+          cacheSet(cacheKey, freshGames);
+          games.splice(0, games.length, ...freshGames);
+          
+          const countEl = container.querySelector('#library-count');
+          if (countEl) countEl.textContent = games.length;
+          // renderGames will be defined by the time this runs
+          if (typeof renderGames === 'function' && typeof getFilteredGames === 'function') {
+            renderGames(getFilteredGames(), true);
+          }
+        }
+      }).catch(err => console.error('[Library BG Fetch]', err));
+    } else {
+      const data = await steamApi.getOwnedGames();
+      games = data?.response?.games || [];
+      if (games.length > 0) {
+        cacheSet(cacheKey, games);
+      }
+    }
 
     if (games.length === 0) {
       container.innerHTML = `<div class="empty">No games found in your library.</div>`;
       return container;
+    }
+
+    if (window.electronAuth && window.electronAuth.onFarmRefreshPlaytime) {
+      window.electronAuth.onFarmRefreshPlaytime(async () => {
+        try {
+          const freshData = await steamApi.getOwnedGames();
+          const freshGames = freshData?.response?.games || [];
+          if (freshGames.length > 0) {
+            games.forEach(g => {
+              const fresh = freshGames.find(f => f.appid === g.appid);
+              if (fresh && fresh.playtime_forever !== undefined) {
+                g.playtime_forever = fresh.playtime_forever;
+              }
+            });
+            renderGames(getFilteredGames(), true);
+          }
+        } catch (err) {
+          console.error('[Library] Failed to refresh playtime:', err);
+        }
+      });
     }
 
     // Sort will be applied dynamically via sortGames()
@@ -51,7 +105,7 @@ export async function renderLibrary() {
               onmouseover="this.style.borderColor='var(--color-accent-green)';this.style.color='var(--color-accent-green)'"
               onmouseout="this.style.borderColor='var(--color-border)';this.style.color='var(--color-text-secondary)'"
             >
-              🔑 Активировать ключ
+              ${icons.key} Активировать ключ
             </button>
           </div>
         </div>
@@ -60,15 +114,15 @@ export async function renderLibrary() {
         <div class="filters-row">
           <label class="filter-toggle-cards" id="filter-cards-label">
             <input type="checkbox" id="filter-remaining-drops" style="display: none;">
-            <span>🃏 Карточки</span>
+            <span>${icons.layers} Карточки</span>
           </label>
           <button id="auto-farm-btn" class="auto-farm-btn-round" style="display: none;" title="Запустить авто-фарм">
             <svg class="icon-play" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
             <svg class="icon-pause" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
           </button>
           <div id="global-drops-counter" class="global-drops-count" style="display: none;"></div>
-          <button id="btn-show-stats" class="inline-action-btn" style="display:none;" title="Статистика фарма">📊</button>
-          <button id="btn-show-settings" class="inline-action-btn" style="display:none;" title="Настройки фарма">⚙</button>
+          <button id="btn-show-stats" class="inline-action-btn" style="display:none;" title="Статистика фарма">${icons.chart}</button>
+          <button id="btn-show-settings" class="inline-action-btn" style="display:none;" title="Настройки фарма">${icons.settings}</button>
           <button id="stop-all-idle-btn" class="stop-all-btn" style="display: none;">Stop All Idle</button>
         </div>
       </div>
@@ -79,7 +133,9 @@ export async function renderLibrary() {
       </div>
       
       <div id="auto-farm-status-bar" class="auto-farm-status-bar" style="display: none;"></div>
-      <div id="recent-shelf" class="recent-shelf"></div>
+      <div id="farming-details-embedded" style="padding: 0 24px;"></div>
+      <div id="recent-shelf" class="recent-shelf transition-shelf"></div>
+      <div class="shelf-divider transition-shelf" id="recent-shelf-divider"></div>
       <div class="games-grid" id="games-grid"></div>
     `;
 
@@ -90,6 +146,9 @@ export async function renderLibrary() {
     const filterCardsLabel = container.querySelector('#filter-cards-label');
     const autoFarmBtn = container.querySelector('#auto-farm-btn');
     const autoFarmStatusBar = container.querySelector('#auto-farm-status-bar');
+    const farmingDetailsCont = container.querySelector('#farming-details-embedded');
+    const recentShelfEl = container.querySelector('#recent-shelf');
+    const recentShelfDivider = container.querySelector('#recent-shelf-divider');
     const stopAllBtn = container.querySelector('#stop-all-idle-btn');
     const globalDropsEl = container.querySelector('#global-drops-counter');
     const libraryCountEl = container.querySelector('#library-count');
@@ -257,8 +316,10 @@ export async function renderLibrary() {
           html += `
             <div class="status-phase-row simultaneous-row">
               <span class="phase-pill pill-simultaneous">ПРОГРЕВ</span>
-              <span class="status-icon">🔥</span>
+              <span class="status-icon">${icons.fire}</span>
               <span>${activeCount} игр</span>
+              <span class="status-sep">·</span>
+              <span>${status.totalRemaining || 0} карточек</span>
               <span class="status-sep">·</span>
               <span>смена фазы через ${timeStr}</span>
             </div>`;
@@ -279,8 +340,10 @@ export async function renderLibrary() {
           html += `
             <div class="status-phase-row sequential-row">
               <span class="phase-pill pill-sequential">ФАРМ</span>
-              <span class="status-icon">▶</span>
+              <span class="status-icon">${icons.play}</span>
               <span class="farm-game-name">${gameName}</span>
+              <span class="status-sep">·</span>
+              <span>${status.totalRemaining || 0} карточек</span>
               <span class="status-sep">·</span>
               <span>${currentIdx}/${totalInBatch}</span>
               <span class="status-sep">·</span>
@@ -355,31 +418,40 @@ export async function renderLibrary() {
             : '';
 
           return `
-            <div class="game-card" data-appid="${game.appid}" style="animation-delay: ${animDelay}ms">
-              <div class="game-card-top">
-                <div class="skeleton-cover" style="width: 32px; height: 32px; display: inline-block; border-radius: var(--radius-sm); flex-shrink: 0; overflow: hidden;">
-                  <img src="http://media.steampowered.com/steamcommunity/public/images/apps/${game.appid}/${game.img_icon_url}.jpg" 
-                       alt="${game.name}" class="game-icon" 
-                       style="opacity: 0; transition: opacity 250ms ease;"
-                       onload="this.style.opacity='1'; this.parentElement.classList.remove('skeleton-cover');"
-                       onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\'></svg>'; this.parentElement.classList.remove('skeleton-cover'); this.style.opacity='1';"/>
-                </div>
-                <div class="game-card-title-group">
-                  <h3 title="${game.name}">${game.name}</h3>
-                  <p class="playtime-text">${playtimeStr}${lastStr}</p>
-                </div>
-              </div>
-              <div class="game-card-status-row">
-                <div class="badges-container"></div>
-                <label class="idle-switch">
-                  <span class="idle-label" style="font-size: 11px; color: #555; user-select: none;">Idle</span>
-                  <div class="switch-control">
-                    <input type="checkbox" class="idle-checkbox" data-appid="${game.appid}">
-                    <span class="switch-thumb"></span>
+            <div class="game-card" data-appid="${game.appid}" data-game-name="${game.name.replace(/"/g, '&quot;')}" style="animation-delay: ${animDelay}ms">
+              <div class="game-card-body">
+                <div class="game-card-top">
+                  <div class="skeleton-cover" style="width: 32px; height: 32px; display: inline-block; border-radius: var(--radius-sm); flex-shrink: 0; overflow: hidden;">
+                    <img src="http://media.steampowered.com/steamcommunity/public/images/apps/${game.appid}/${game.img_icon_url}.jpg" 
+                         alt="${game.name}" class="game-icon" 
+                         style="opacity: 0; transition: opacity 250ms ease;"
+                         onload="this.style.opacity='1'; this.parentElement.classList.remove('skeleton-cover');"
+                         onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\'></svg>'; this.parentElement.classList.remove('skeleton-cover'); this.style.opacity='1';"/>
                   </div>
-                </label>
+                  <div class="game-card-title-group">
+                    <h3 title="${game.name}">${game.name}</h3>
+                    <p class="playtime-text">${playtimeStr}${lastStr}</p>
+                  </div>
+                </div>
+                <div class="game-card-status-row">
+                  <div class="badges-container"></div>
+                  <label class="idle-switch">
+                    <span class="idle-label" style="font-size: 11px; color: #555; user-select: none;">Idle</span>
+                    <div class="switch-control">
+                      <input type="checkbox" class="idle-checkbox" data-appid="${game.appid}">
+                      <span class="switch-thumb"></span>
+                    </div>
+                  </label>
+                </div>
               </div>
-              ${actionBtnHtml}
+              <div class="game-card-footer">
+                <div class="hltb-badge-row">
+                  <span class="hltb-badge" style="display:none;"></span>
+                </div>
+                <div class="action-btn-wrapper">
+                  ${actionBtnHtml}
+                </div>
+              </div>
             </div>`;
         };
 
@@ -425,27 +497,27 @@ export async function renderLibrary() {
           if (meta) {
             switch (meta.state) {
               case 'simultaneous':
-                badgeHtml = `<span class="card-badge af-warmup">🔥 Прогрев</span>`;
+                badgeHtml = `<span class="card-badge af-warmup">${icons.fire} Прогрев${remainingDrops > 0 ? `<span style="margin-left:6px;opacity:0.7;font-size:0.85em;">${remainingDrops} карт.</span>` : ''}</span>`;
                 cardState = 'state-warmup';
                 isIdling = true;
                 break;
               case 'sequential-active':
-                badgeHtml = `<span class="card-badge af-farming">▶ Фармится</span>`;
+                badgeHtml = `<span class="card-badge af-farming">${icons.play} Фармится${remainingDrops > 0 ? `<span style="margin-left:6px;opacity:0.7;font-size:0.85em;">${remainingDrops} карт.</span>` : ''}</span>`;
                 cardState = 'state-farm-active';
                 isIdling = true;
                 break;
               case 'sequential-queue':
-                badgeHtml = `<span class="card-badge af-farm-queue">⌛ В ОЧЕРЕДИ</span>`;
+                badgeHtml = `<span class="card-badge af-farm-queue">${icons.hourglass} В ОЧЕРЕДИ</span>`;
                 cardState = 'state-farm-queue';
                 break;
               default:
-                badgeHtml = remainingDrops > 0 ? `<span class="card-badge">🃏 ${remainingDrops}</span>` : '';
+                badgeHtml = remainingDrops > 0 ? `<span class="card-badge">${icons.layers} ${remainingDrops}</span>` : '';
             }
           } else {
-            badgeHtml = remainingDrops > 0 ? `<span class="card-badge">🃏 ${remainingDrops}</span>` : '';
+            badgeHtml = remainingDrops > 0 ? `<span class="card-badge">${icons.layers} ${remainingDrops}</span>` : '';
           }
         } else {
-          badgeHtml = remainingDrops > 0 ? `<span class="card-badge">🃏 ${remainingDrops}</span>` : '';
+          badgeHtml = remainingDrops > 0 ? `<span class="card-badge">${icons.layers} ${remainingDrops}</span>` : '';
           if (isIdling) cardState = 'state-idle';
         }
 
@@ -476,11 +548,11 @@ export async function renderLibrary() {
     };
 
     const SORT_OPTIONS = [
-      { id: 'recent',        label: 'Недавние',      icon: '🕐' },
-      { id: 'name_asc',      label: 'A → Z',         icon: '🔤' },
-      { id: 'name_desc',     label: 'Z → A',         icon: '🔤' },
-      { id: 'playtime_desc', label: 'Время ↓',       icon: '⏱' },
-      { id: 'playtime_asc',  label: 'Время ↑',       icon: '⏱' },
+      { id: 'recent',        label: 'Недавние',      icon: icons.clock },
+      { id: 'name_asc',      label: 'A &rarr; Z',    icon: icons.text },
+      { id: 'name_desc',     label: 'Z &rarr; A',    icon: icons.text },
+      { id: 'playtime_desc', label: 'Время &darr;',  icon: icons.clock },
+      { id: 'playtime_asc',  label: 'Время &uarr;',  icon: icons.clock },
     ];
 
     const sortGames = (list, sort) => {
@@ -504,8 +576,10 @@ export async function renderLibrary() {
     window.toggleShowInstalled = () => {
       showInstalled = !showInstalled;
       localStorage.setItem('library_show_installed', showInstalled.toString());
-      renderGames(getFilteredGames());
+      const filtered = getFilteredGames();
+      renderGames(filtered);
       renderSortBar();
+      setTimeout(() => loadHltbForVisible(filtered), 50);
     };
 
     const renderSortBar = () => {
@@ -537,7 +611,7 @@ export async function renderLibrary() {
             class="filter-toggle-cards ${showInstalled ? 'active' : ''}"
             style="height: 32px; padding: 0 12px; font-size: 12px;"
           >
-            💾 Установленные
+            ${icons.save} Установленные
           </button>
         </div>
       `;
@@ -565,11 +639,54 @@ export async function renderLibrary() {
       currentSort = sort;
       localStorage.setItem('library_sort', sort);
       renderSortBar();
-      renderGames(getFilteredGames());
+      const filtered = getFilteredGames();
+      renderGames(filtered);
+      setTimeout(() => loadHltbForVisible(filtered), 50);
+    };
+
+    // ── HLTB batch fetch (runs once after first render, populates badges lazily) ──────
+    const hltbBadgeStyle = document.createElement('style');
+    hltbBadgeStyle.textContent = `
+      .hltb-badge {
+        display: none;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        color: var(--color-text-secondary);
+        background: rgba(255,255,255,0.03);
+        border: 1px solid var(--color-border);
+        padding: 2px 8px;
+        border-radius: var(--radius-sm);
+        white-space: nowrap;
+        width: fit-content;
+        opacity: 0.8;
+      }
+    `;
+    container.appendChild(hltbBadgeStyle);
+
+    const loadHltbForVisible = async (filteredGames) => {
+      // HLTB is only fetched in backlog.js. Here we only use cache.
+      const hltbMap = getAll(filteredGames);
+      
+      for (const game of filteredGames) {
+        const times = hltbMap[game.appid];
+        if (!times?.main) continue;
+        
+        const card = grid.querySelector(`.game-card[data-appid="${game.appid}"]`);
+        if (card) {
+          const badge = card.querySelector('.hltb-badge');
+          if (badge) {
+            badge.innerHTML = `<span style="display:inline-flex;align-items:center;gap:3px;">${icons.clock} ${times.main}ч</span>`;
+            badge.style.display = 'inline-flex';
+          }
+        }
+      }
     };
 
     renderSortBar();
     renderGames(getFilteredGames());
+    // Kick off HLTB after first render (non-blocking)
+    setTimeout(() => loadHltbForVisible(getFilteredGames()), 500);
 
     // Debounced search — 300ms delay
     let searchDebounceTimer = null;
@@ -577,21 +694,31 @@ export async function renderLibrary() {
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(() => {
         currentSearchQuery = e.target.value.toLowerCase();
-        renderGames(getFilteredGames());
+        const filtered = getFilteredGames();
+        renderGames(filtered);
+        setTimeout(() => loadHltbForVisible(filtered), 50);
       }, 300);
     });
 
     dropsCheckbox.addEventListener('change', (e) => {
       filterCardsOnly = e.target.checked;
+      
+      // Smoothly hide/show recent shelf
       if (filterCardsOnly) {
         filterCardsLabel.classList.add('active');
-        // We do not change sorting logic in filter since it already uses getFilteredGames 
+        recentShelfEl.classList.add('shelf-collapsed');
+        if (recentShelfDivider) recentShelfDivider.classList.add('shelf-collapsed');
       } else {
         filterCardsLabel.classList.remove('active');
+        recentShelfEl.classList.remove('shelf-collapsed');
+        if (recentShelfDivider) recentShelfDivider.classList.remove('shelf-collapsed');
       }
+
       renderAutoFarmState(); 
-      renderGames(getFilteredGames());
+      const filtered = getFilteredGames();
+      renderGames(filtered);
       updateInlinePanels();
+      setTimeout(() => loadHltbForVisible(filtered), 50);
     });
     
     autoFarmBtn.addEventListener('click', () => {
@@ -679,9 +806,12 @@ export async function renderLibrary() {
     });
 
     setTimeout(() => renderAutoFarmState(), 0);
+    
+    // Initialize detailed farming list
+    const unsubFarming = initFarmingIndicator(farmingDetailsCont);
 
     // ── Recent Games Shelf ─────────────────────────────────
-    const recentShelfEl = container.querySelector('#recent-shelf');
+    // recentShelfEl is already declared at the top
 
     const formatPlaytime = (g) => {
       if (g.playtime2wks > 0) return `${(g.playtime2wks / 60).toFixed(1)} ч/2нед`;
@@ -706,10 +836,12 @@ export async function renderLibrary() {
 
       if (!games || games.length === 0) {
         recentShelfEl.style.display = 'none';
+        if (recentShelfDivider) recentShelfDivider.style.display = 'none';
         return;
       }
 
       recentShelfEl.style.display = 'block';
+      if (recentShelfDivider) recentShelfDivider.style.display = 'block';
 
       // Header row
       const header = document.createElement('div');
@@ -1061,13 +1193,14 @@ export async function renderLibrary() {
       background: var(--color-bg-surface-light); 
       border: 1px solid var(--color-border); 
       border-radius: var(--radius-md); 
-      padding: 12px; 
+      padding: 16px; 
       display: flex; 
       flex-direction: column;
-      gap: 8px;
+      gap: 12px;
       min-width: 0;
+      min-height: 200px;
       cursor: pointer;
-      transition: transform var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast);
+      transition: all var(--transition-fast);
       animation: cardLoad 150ms ease forwards;
       opacity: 0;
     }
@@ -1153,10 +1286,30 @@ export async function renderLibrary() {
       align-items: center;
     }
     
+    .game-card-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .game-card-footer {
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .hltb-badge-row {
+      min-height: 22px;
+      display: flex;
+      align-items: center;
+    }
+
     .badges-container {
       display: flex;
       gap: 4px;
-      min-height: 20px;
+      min-height: 22px;
       align-items: center;
     }
 
@@ -1169,21 +1322,25 @@ export async function renderLibrary() {
       color: var(--color-text-secondary); 
       font-size: 10px;
       font-weight: 700;
-      padding: 2px 6px; 
+      padding: 2px 8px; 
       border-radius: var(--radius-sm); 
       letter-spacing: 0.5px;
       animation: badgePopup 120ms ease forwards;
     }
     
     @keyframes badgePopup {
-      from { opacity: 0; transform: scale(0.85); }
+      from { opacity: 0; transform: scale(0.9); }
       to { opacity: 1; transform: scale(1); }
     }
 
     .play-btn, .btn-install { 
       width: 100%;
-      padding: 6px 0; 
-      font-size: 12px; 
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px; 
+      font-weight: 600;
       border-radius: var(--radius-sm);
       background: var(--color-bg-elevated); 
       border: 1px solid var(--color-border); 
@@ -1194,6 +1351,17 @@ export async function renderLibrary() {
     .play-btn:hover, .btn-install:hover { 
       background: var(--color-text-primary); 
       color: var(--color-bg-base); 
+      transform: translateY(-1px);
+    }
+    .play-btn {
+      background: rgba(34, 197, 94, 0.1);
+      border-color: rgba(34, 197, 94, 0.2);
+      color: #4ade80;
+    }
+    .play-btn:hover {
+      background: var(--color-accent-green);
+      border-color: var(--color-accent-green);
+      color: #000;
     }
 
     /* Idle Switch */
@@ -1570,7 +1738,7 @@ function showActivateKeyModal() {
       <div style="display:flex;align-items:center;justify-content:space-between;
                   margin-bottom:20px;">
         <div style="font-size:18px;font-weight:700;color:#f5f5f5;">
-          🔑 Активация игры
+          ${icons.key} Активация игры
         </div>
         <button onclick="closeActivateModal()" style="
           background:none;border:none;color:#555;

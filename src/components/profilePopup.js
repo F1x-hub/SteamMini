@@ -1,5 +1,7 @@
+import { icons } from '../utils/icons.js';
 import store from '../store/index.js';
 import steamApi from '../api/steam.js';
+import storage from '../utils/storage.js';
 
 export function createProfilePopup() {
   const container = document.createElement('div');
@@ -279,7 +281,7 @@ export function createProfilePopup() {
         </div>
         <div class="profile-popup-divider"></div>
         <button class="profile-popup-action" id="profile-settings-btn">
-          <span class="profile-popup-icon">⚙️</span> Settings
+          <span class="profile-popup-icon">${icons.settings}</span> Settings
         </button>
       `;
       bindGlobalButtons();
@@ -331,17 +333,17 @@ export function createProfilePopup() {
       </div>
       
       <a href="${user.profileUrl || '#'}" target="_blank" class="profile-popup-action">
-        <span class="profile-popup-icon">🌐</span> View on Steam
+        <span class="profile-popup-icon" style="display:flex;">${icons.globe}</span> View on Steam
       </a>
       
       <div class="profile-popup-divider"></div>
       
       <button class="profile-popup-action" id="profile-settings-btn">
-        <span class="profile-popup-icon">⚙️</span> Settings & Accounts
+        <span class="profile-popup-icon">${icons.settings}</span> Settings & Accounts
       </button>
       
       <button class="profile-popup-action danger" id="profile-logout-btn">
-        <span class="profile-popup-icon">🚪</span> Logout
+        <span class="profile-popup-icon" style="display:flex;">${icons.logout}</span> Logout
       </button>
     `;
 
@@ -429,11 +431,10 @@ export function createProfilePopup() {
     
     const logoutBtn = content.querySelector('#profile-logout-btn');
     if (logoutBtn) {
-      logoutBtn.addEventListener('click', (e) => {
+      logoutBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        store.logout();
         store.set('profilePopupOpen', false);
-        window.location.reload();
+        await store.logout();
       });
     }
   };

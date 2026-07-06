@@ -1,6 +1,5 @@
-import https from 'https';
 import { session } from 'electron';
-import { timer } from '../utils/helpers.js';
+import { timer, steamFetchWithRetry } from '../utils/helpers.js';
 
 /**
  * Inventory IPC handlers.
@@ -52,43 +51,25 @@ export function register(ipcMain) {
         'Steam_Language=english'
       ].filter(Boolean).join('; ');
 
-      const data = await new Promise((resolve, reject) => {
-        const options = {
-          hostname: 'steamcommunity.com',
-          path: `/profiles/${steamId}/inventory/json/753/6?l=russian`,
-          method: 'GET',
-          headers: {
-            'Cookie': cookieStr,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://steamcommunity.com/',
-          }
-        };
-
-        const req = https.request(options, (res) => {
-          console.log('[inventory] HTTP status:', res.statusCode);
-
-          let body = '';
-          res.on('data', chunk => body += chunk);
-          res.on('end', () => {
-            if (res.statusCode !== 200) {
-              console.log('[inventory] Response body (first 200):', body.substring(0, 200));
-              reject(new Error(`HTTP ${res.statusCode} ${res.statusMessage}`));
-              return;
-            }
-            try { resolve(JSON.parse(body)); }
-            catch (e) { reject(new Error('Invalid JSON response')); }
-          });
-        });
-
-        req.on('error', reject);
-        req.setTimeout(30000, () => {
-          req.destroy();
-          reject(new Error('Request timeout'));
-        });
-        req.end();
+      const url = `https://steamcommunity.com/profiles/${steamId}/inventory/json/753/6?l=russian`;
+      const res = await steamFetchWithRetry(url, {
+        method: 'GET',
+        headers: {
+          'Cookie': cookieStr,
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://steamcommunity.com/',
+        }
       });
+
+      console.log('[inventory] HTTP status:', res.status);
+      if (!res.ok) {
+        const bodyTxt = await res.text();
+        console.log('[inventory] Response body (first 200):', bodyTxt.substring(0, 200));
+        throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      }
+
+      const data = await res.json();
 
       if (!data.success && data.Error) {
         t.end(`(error: ${data.Error})`);

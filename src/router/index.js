@@ -3,6 +3,7 @@ class Router {
     this.routes = [];
     this.currentRoute = null;
     this.rootElement = null;
+    this._pageCache = new Map(); // key = path, value = DOM element
 
     // Handle back/forward navigation
     window.addEventListener('popstate', () => {
@@ -83,24 +84,45 @@ class Router {
     }
 
     if (this.rootElement) {
-      // Call cleanup if previous view provided one
-      if (this._currentCleanup) {
-        try { this._currentCleanup(); } catch (e) { console.error('Router cleanup error:', e); }
-        this._currentCleanup = null;
+      // Скрыть все закешированные страницы
+      this._pageCache.forEach((node) => {
+        if (node instanceof HTMLElement) {
+          node.style.display = 'none';
+        }
+      });
+
+      const cacheKey = path;
+
+      if (this._pageCache.has(cacheKey)) {
+        // Страница уже была создана — просто показываем её
+        const cached = this._pageCache.get(cacheKey);
+        cached.style.display = '';
+        if (!this.rootElement.contains(cached)) {
+          this.rootElement.appendChild(cached);
+        }
+        return;
       }
 
-      this.rootElement.innerHTML = '';
+      // Первый визит — создаём
       const view = await renderFn(...matchArgs);
       
       let element = view;
       if (view && typeof view === 'object' && view.element) {
         element = view.element;
-        this._currentCleanup = view.cleanup;
+        // Cleanup больше не вызывается, так как страницы живут в памяти постоянно
       }
 
       if (typeof element === 'string') {
-        this.rootElement.innerHTML = element;
-      } else if (element instanceof HTMLElement) {
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = element;
+        element = wrapper;
+      } 
+      
+      if (element instanceof HTMLElement) {
+        if (this.currentRoute !== path) {
+          element.style.display = 'none';
+        }
+        this._pageCache.set(cacheKey, element);
         this.rootElement.appendChild(element);
       }
     }

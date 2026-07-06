@@ -1,7 +1,72 @@
 import https from 'https';
-import { session } from 'electron';
+import { app, session } from 'electron';
+import { join } from 'path';
+import { readFileSync, writeFileSync } from 'fs';
 import { httpsGet, timer, sellerPriceFromBuyerPrice } from '../utils/helpers.js';
 import { invalidateInventoryCache } from './inventory.js';
+
+// ─── Price Cache with 24h TTL ─────────────────────────────────────
+
+const priceCache = new Map();
+const PRICE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+function getPriceCached(marketHashName) {
+  const entry = priceCache.get(marketHashName);
+  if (entry && Date.now() - entry.timestamp < PRICE_CACHE_TTL) {
+    return entry;
+  }
+  return null;
+}
+
+function setPriceCached(marketHashName, data) {
+  priceCache.set(marketHashName, { ...data, timestamp: Date.now() });
+}
+
+// ─── Disk Persistence ─────────────────────────────────────────────
+
+let priceCacheFile = null;
+
+function getPriceCacheFile() {
+  if (!priceCacheFile) {
+    priceCacheFile = join(app.getPath('userData'), 'price-cache.json');
+  }
+  return priceCacheFile;
+}
+
+function loadPriceCache() {
+  try {
+    const data = JSON.parse(readFileSync(getPriceCacheFile(), 'utf-8'));
+    const now = Date.now();
+    let loaded = 0;
+    for (const [key, val] of Object.entries(data)) {
+      // Only load entries that haven't expired
+      if (val.timestamp && now - val.timestamp < PRICE_CACHE_TTL) {
+        priceCache.set(key, val);
+        loaded++;
+      }
+    }
+    console.log(`[priceCache] Loaded ${loaded} entries from disk (${Object.keys(data).length} total on disk)`);
+  } catch { /* file doesn't exist yet — ok */ }
+}
+
+function savePriceCache() {
+  try {
+    const obj = Object.fromEntries(priceCache);
+    writeFileSync(getPriceCacheFile(), JSON.stringify(obj));
+    console.log(`[priceCache] Saved ${priceCache.size} entries to disk`);
+  } catch (err) {
+    console.error('[priceCache] Failed to save:', err.message);
+  }
+}
+
+// Load cache at module init
+loadPriceCache();
+
+// Save every 5 minutes
+setInterval(savePriceCache, 5 * 60 * 1000);
+
+// Save on app quit
+app.on('before-quit', savePriceCache);
 
 /**
  * Market IPC handlers.
@@ -17,7 +82,7 @@ import { invalidateInventoryCache } from './inventory.js';
 export async function fetchPriceWithRetry(marketHashName, retries = 3) {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const data = await new Promise((resolve, reject) => {
+      const result = await new Promise((resolve, reject) => {
         const req = https.request({
           hostname: 'steamcommunity.com',
           path:     '/market/priceoverview/?' +
@@ -35,6 +100,15 @@ export async function fetchPriceWithRetry(marketHashName, retries = 3) {
           res.on('data', c => body += c);
           res.on('end', () => {
             console.log(`[price] ${marketHashName}: HTTP ${res.statusCode}`);
+            
+            if (res.statusCode === 429) {
+              const retryAfter = parseInt(res.headers['retry-after'] || '60');
+              const waitMs = retryAfter * 1000;
+              console.warn(`[price] 429 Rate Limit — waiting ${waitMs}ms before retry...`);
+              reject({ statusCode: 429, waitMs });
+              return;
+            }
+
             if (!body.trim().startsWith('{')) {
               console.error(`[price] Not JSON (attempt ${attempt + 1}):`, body.substring(0, 100));
               reject(new Error('Not JSON response'));
@@ -47,9 +121,15 @@ export async function fetchPriceWithRetry(marketHashName, retries = 3) {
         req.on('error', reject);
         req.end();
       });
-      return data;
+      return result;
     } catch (err) {
-      console.error(`[price] Attempt ${attempt + 1} failed:`, err.message);
+      if (err.statusCode === 429) {
+        await new Promise(r => setTimeout(r, err.waitMs));
+        // Retry one more time after 429
+        if (attempt < retries - 1) continue;
+      }
+      
+      console.error(`[price] Attempt ${attempt + 1} failed:`, err.message || err);
       if (attempt < retries - 1) {
         const delay = 1000 * Math.pow(2, attempt);
         console.log(`[price] Retrying in ${delay}ms...`);
@@ -106,6 +186,14 @@ export async function getItemNameId(marketHashName) {
   return match[1];
 }
 
+// ─── Cache to avoid redundant API hits for pagination ───────
+let activeListingsCache = { timestamp: 0, data: null };
+
+function invalidateListingsCache() {
+  activeListingsCache.timestamp = 0;
+  activeListingsCache.data = null;
+}
+
 async function cancelSingleListing(listingId) {
   try {
     const ses         = session.defaultSession;
@@ -129,45 +217,97 @@ async function cancelSingleListing(listingId) {
       }
     }, body);
 
+    invalidateListingsCache(); // force refresh cache after cancellation
     return { success: result.status === 200 };
   } catch (err) {
     return { error: err.message };
   }
 }
 
+// ─── Queue Helper ─────────────────────────────────────────────────
+
+let marketQueue = Promise.resolve();
+const MARKET_DELAY_MS = 4000;
+
+function queueMarketRequest(fn) {
+  marketQueue = marketQueue.then(() =>
+    new Promise(resolve => setTimeout(resolve, MARKET_DELAY_MS)).then(fn)
+  );
+  return marketQueue;
+}
+
 // ─── Registration ─────────────────────────────────────────────────
 
 export function register(ipcMain) {
   // ─── Get Price ──────────────────────────────────────────
-  ipcMain.handle('market:get-price', async (_, { marketHashName }) => {
-    console.log('[market:get-price] Input marketHashName:', JSON.stringify(marketHashName));
-    const t = timer(`market:get-price "${marketHashName}"`);
-    try {
-      const data = await fetchPriceWithRetry(marketHashName);
-      if (!data || !data.success) {
-        t.end(`(error: Failed to fetch price)`);
-        return { error: 'Failed to fetch price' };
-      }
-      
-      const parsePriceCents = (str) => {
-        if (!str) return null;
-        const num = parseFloat(str.replace(/[^0-9.]/g, ''));
-        return Math.round(num * 100);
-      };
+  ipcMain.handle('market:get-price', async (_, { marketHashName, knownPriceCents }) => {
+    if (knownPriceCents != null) {
+      return { success: true, lowestPriceCents: knownPriceCents, medianPriceCents: null, lowestPrice: null, medianPrice: null, volume: null };
+    }
 
-      t.end();
+    // Check cache first
+    const cached = getPriceCached(marketHashName);
+    if (cached !== null) {
+      console.log(`[price] ${marketHashName}: cache hit (${cached.lowestPriceCents}¢)`);
       return {
         success:          true,
-        lowestPriceCents: parsePriceCents(data.lowest_price),
-        medianPriceCents: parsePriceCents(data.median_price),
-        lowestPrice:      data.lowest_price  ?? null,
-        medianPrice:      data.median_price  ?? null,
-        volume:           data.volume        ?? null,
+        lowestPriceCents: cached.lowestPriceCents,
+        medianPriceCents: cached.medianPriceCents ?? null,
+        lowestPrice:      cached.lowestPrice ?? null,
+        medianPrice:      cached.medianPrice ?? null,
+        volume:           cached.volume ?? null,
       };
-    } catch (err) {
-      t.end(`(error: ${err.message})`);
-      return { error: err.message };
     }
+
+    return queueMarketRequest(async () => {
+      // Re-check cache (might have been filled while waiting in queue)
+      const cachedAgain = getPriceCached(marketHashName);
+      if (cachedAgain !== null) {
+        console.log(`[price] ${marketHashName}: cache hit after queue (${cachedAgain.lowestPriceCents}¢)`);
+        return {
+          success:          true,
+          lowestPriceCents: cachedAgain.lowestPriceCents,
+          medianPriceCents: cachedAgain.medianPriceCents ?? null,
+          lowestPrice:      cachedAgain.lowestPrice ?? null,
+          medianPrice:      cachedAgain.medianPrice ?? null,
+          volume:           cachedAgain.volume ?? null,
+        };
+      }
+
+      console.log('[market:get-price] Input marketHashName:', JSON.stringify(marketHashName));
+      const t = timer(`market:get-price "${marketHashName}"`);
+      try {
+        const data = await fetchPriceWithRetry(marketHashName);
+        if (!data || !data.success) {
+          t.end(`(error: Failed to fetch price)`);
+          return { error: 'Failed to fetch price' };
+        }
+        
+        const parsePriceCents = (str) => {
+          if (!str) return null;
+          const num = parseFloat(str.replace(/[^0-9.]/g, ''));
+          return Math.round(num * 100);
+        };
+
+        const result = {
+          success:          true,
+          lowestPriceCents: parsePriceCents(data.lowest_price),
+          medianPriceCents: parsePriceCents(data.median_price),
+          lowestPrice:      data.lowest_price  ?? null,
+          medianPrice:      data.median_price  ?? null,
+          volume:           data.volume        ?? null,
+        };
+
+        // Save to cache
+        setPriceCached(marketHashName, result);
+
+        t.end();
+        return result;
+      } catch (err) {
+        t.end(`(error: ${err.message})`);
+        return { error: err.message };
+      }
+    });
   });
 
   // ─── Get Histogram ──────────────────────────────────────
@@ -365,14 +505,11 @@ export function register(ipcMain) {
     return { success: true, results };
   });
 
-  // ─── Get Listings ───────────────────────────────────────
+// ─── Get Listings ───────────────────────────────────────
   ipcMain.handle('market:get-listings', async (_, params = {}) => {
     const t = timer('market:get-listings');
     try {
-      const start = parseInt(params?.start ?? 0);
-      const count = parseInt(params?.count ?? 10);
-
-      console.log(`[listings] start=${start} count=${count}`);
+      const forceRefresh = !!params?.forceRefresh;
 
       const ses         = session.defaultSession;
       const allCookies  = await ses.cookies.get({ domain: 'steamcommunity.com' });
@@ -384,69 +521,87 @@ export function register(ipcMain) {
         return { error: 'Steam cookies not found' };
       }
 
-      const data = await httpsGet({
-        hostname: 'steamcommunity.com',
-        path:     `/market/mylistings?norender=1&start=${start}&count=${count}`,
-        method:   'GET',
-        headers: {
-          'Cookie':          `sessionid=${sessionId}; steamLoginSecure=${loginSecure}`,
-          'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Referer':         'https://steamcommunity.com/market/',
-          'Accept':          'application/json, text/plain, */*',
-          'Accept-Language': 'en-US,en;q=0.9',
-        }
-      }).then(r => {
-        try { return JSON.parse(r.body); }
-        catch { throw new Error('Invalid JSON'); }
-      });
+      if (forceRefresh || Date.now() - activeListingsCache.timestamp > 30000 || !activeListingsCache.data) {
+        let allListings = [];
+        let totalCount = 0;
+        let reqStart = 0;
+        let reqCount = 100;
 
-      if (!data.success) {
-        t.end(`(error: Failed to load listings)`);
-        return { error: 'Failed to load listings' };
+        while (true) {
+          const data = await httpsGet({
+            hostname: 'steamcommunity.com',
+            path:     `/market/mylistings?norender=1&start=${reqStart}&count=${reqCount}`,
+            method:   'GET',
+            headers: {
+              'Cookie':          `sessionid=${sessionId}; steamLoginSecure=${loginSecure}`,
+              'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Referer':         'https://steamcommunity.com/market/',
+              'Accept':          'application/json, text/plain, */*',
+              'Accept-Language': 'en-US,en;q=0.9',
+            }
+          }).then(r => {
+            try { return JSON.parse(r.body); }
+            catch { throw new Error('Invalid JSON'); }
+          });
+
+          if (!data.success) {
+            throw new Error('Failed to load listings');
+          }
+
+          totalCount = data.num_active_listings ?? data.total_count ?? 0;
+          const currentListings = data.listings ?? [];
+          
+          if (currentListings.length === 0) break;
+
+          for (const listing of currentListings) {
+            const asset = listing.asset ?? {};
+            const sellerCents = parseInt(listing.converted_price_per_unit ?? 0);
+            const feeCents    = parseInt(listing.converted_fee_per_unit   ?? 0);
+            const buyerCents  = sellerCents + feeCents;
+
+            allListings.push({
+              listingId:        listing.listingid,
+              buyerPriceCents:  buyerCents,
+              sellerPriceCents: sellerCents,
+              buyerPrice:       `$${(buyerCents  / 100).toFixed(2)}`,
+              sellerPrice:      `$${(sellerCents / 100).toFixed(2)}`,
+              name:             asset.market_name  ?? asset.name ?? '—',
+              gameName:         asset.type         ?? '',
+              iconUrl:          asset.icon_url
+                ? `https://community.akamai.steamstatic.com/economy/image/${asset.icon_url}/96fx96f`
+                : null,
+              listedOn:         listing.time_created ?? 0,
+              listedOnStr:      listing.time_created_str ?? '',
+              cancelUrl:        listing.cancel_url ?? null,
+            });
+          }
+
+          reqStart += reqCount;
+          if (reqStart >= totalCount || allListings.length >= 2000) break;
+          await new Promise(r => setTimeout(r, 600)); // Rate limit pause
+        }
+
+        const totalBuyer  = allListings.reduce((s, l) => s + l.buyerPriceCents,  0);
+        const totalSeller = allListings.reduce((s, l) => s + l.sellerPriceCents, 0);
+
+        activeListingsCache.data = {
+          totalCount,
+          totalBuyer,
+          totalSeller,
+          allListings
+        };
+        activeListingsCache.timestamp = Date.now();
       }
 
-      console.log('[listings] total_count:', data.total_count);
-      console.log('[listings] num_active_listings:', data.num_active_listings);
-      console.log('[listings] listings count:', data.listings?.length);
-      console.log('[listings] assets keys:', Object.keys(data.assets ?? {}));
-      console.log('[listings] First listing raw:', JSON.stringify(data.listings?.[0], null, 2));
-
-      const listings = (data.listings ?? []).map(listing => {
-        const asset = listing.asset ?? {};
-        const sellerCents = parseInt(listing.converted_price_per_unit ?? 0);
-        const feeCents    = parseInt(listing.converted_fee_per_unit   ?? 0);
-        const buyerCents  = sellerCents + feeCents;
-
-        return {
-          listingId:        listing.listingid,
-          buyerPriceCents:  buyerCents,
-          sellerPriceCents: sellerCents,
-          buyerPrice:       `$${(buyerCents  / 100).toFixed(2)}`,
-          sellerPrice:      `$${(sellerCents / 100).toFixed(2)}`,
-          name:             asset.market_name  ?? asset.name ?? '—',
-          gameName:         asset.type         ?? '',
-          iconUrl:          asset.icon_url
-            ? `https://community.akamai.steamstatic.com/economy/image/${asset.icon_url}/96fx96f`
-            : null,
-          listedOn:         listing.time_created ?? 0,
-          listedOnStr:      listing.time_created_str ?? '',
-          cancelUrl:        listing.cancel_url ?? null,
-        };
-      });
-
-      const totalBuyer  = listings.reduce((s, l) => s + l.buyerPriceCents,  0);
-      const totalSeller = listings.reduce((s, l) => s + l.sellerPriceCents, 0);
-
-      t.end(`(${listings.length} listings, total=${data.total_count})`);
+      const cache = activeListingsCache.data;
+      t.end(`(${cache.allListings.length} total active listings fetched)`);
 
       return {
         success:      true,
-        total:        data.total_count ?? data.num_active_listings ?? listings.length,
-        start,
-        count,
-        totalBuyer:   `$${(totalBuyer  / 100).toFixed(2)}`,
-        totalSeller:  `$${(totalSeller / 100).toFixed(2)}`,
-        listings,
+        total:        cache.totalCount,
+        totalBuyer:   `$${(cache.totalBuyer  / 100).toFixed(2)}`,
+        totalSeller:  `$${(cache.totalSeller / 100).toFixed(2)}`,
+        allListings:  cache.allListings,
       };
 
     } catch (err) {
@@ -594,5 +749,56 @@ export function register(ipcMain) {
     }
 
     return { success: true, results };
+  });
+
+  // ─── Prefetch Prices (background) ──────────────────────
+  ipcMain.handle('market:prefetch-prices', async (_, marketHashNames) => {
+    const missing = marketHashNames.filter(n => {
+      const cached = getPriceCached(n);
+      return !cached || cached.lowestPriceCents == null;
+    });
+    console.log(`[prefetch] ${missing.length} prices to load in background (${marketHashNames.length - missing.length} already cached)`);
+
+    if (missing.length === 0) return { queued: 0 };
+
+    // Fire-and-forget background task
+    ;(async () => {
+      const parsePriceCents = (str) => {
+        if (!str) return null;
+        const num = parseFloat(str.replace(/[^0-9.]/g, ''));
+        return Math.round(num * 100);
+      };
+
+      for (const name of missing) {
+        // Re-check — may have been loaded while waiting
+        if (getPriceCached(name) !== null) continue;
+
+        await queueMarketRequest(async () => {
+          // One more check after queue wait
+          if (getPriceCached(name) !== null) return;
+
+          try {
+            const data = await fetchPriceWithRetry(name);
+            if (data && data.success) {
+              setPriceCached(name, {
+                success:          true,
+                lowestPriceCents: parsePriceCents(data.lowest_price),
+                medianPriceCents: parsePriceCents(data.median_price),
+                lowestPrice:      data.lowest_price  ?? null,
+                medianPrice:      data.median_price  ?? null,
+                volume:           data.volume        ?? null,
+              });
+              console.log(`[prefetch] ${name}: cached (${parsePriceCents(data.lowest_price)}¢)`);
+            }
+          } catch (err) {
+            console.error(`[prefetch] ${name}: error — ${err.message}`);
+          }
+        });
+      }
+      savePriceCache();
+      console.log('[prefetch] Background price loading complete');
+    })();
+
+    return { queued: missing.length };
   });
 }

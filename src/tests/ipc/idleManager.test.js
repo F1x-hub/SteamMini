@@ -6,12 +6,19 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 // ─── Mock child_process.fork ──────────────────────────────────────────
 const mockChild = {
   on: vi.fn(),
+  once: vi.fn(),
   kill: vi.fn(),
   pid: 1234,
 };
 
 vi.mock('child_process', () => ({
-  fork: vi.fn(() => mockChild),
+  fork: vi.fn(() => ({
+    on: vi.fn(),
+    once: vi.fn((ev, cb) => { if (ev === 'exit') cb(0); }),
+    kill: vi.fn(),
+    send: vi.fn(),
+    pid: 1234,
+  })),
 }));
 
 let startGame, stopGame, getActiveIdles, stopAll;
@@ -21,6 +28,7 @@ beforeEach(async () => {
 
   // Reset mock child
   mockChild.on = vi.fn();
+  mockChild.once = vi.fn();
   mockChild.kill = vi.fn();
 
   // We need to reimport to reset the internal activeIdles Map
@@ -31,7 +39,9 @@ beforeEach(async () => {
   vi.doMock('child_process', () => ({
     fork: vi.fn(() => ({
       on: vi.fn(),
+      once: vi.fn((ev, cb) => { if (ev === 'exit') cb(0); }),
       kill: vi.fn(),
+      send: vi.fn(),
       pid: Math.floor(Math.random() * 10000),
     })),
   }));

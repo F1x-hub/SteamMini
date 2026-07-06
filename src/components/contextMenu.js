@@ -50,17 +50,38 @@ export function initContextMenu() {
   };
 
   document.addEventListener('contextmenu', (e) => {
-    // Check if we are right-clicking on something that allows default selection
-    if (e.target.closest('input, textarea')) return;
-    
     e.preventDefault();
 
-    const gameCard = e.target.closest('.game-card');
-    const wishlistCard = e.target.closest('.wishlist-card');
+    const inputEl = e.target;
+    const isInput = inputEl.tagName === 'INPUT' || inputEl.tagName === 'TEXTAREA' || inputEl.isContentEditable;
+    const gameCard = inputEl.closest('.game-card');
+    const wishlistCard = inputEl.closest('.wishlist-card');
     
     currentActions = [];
 
-    if (gameCard) {
+    if (isInput) {
+      currentActions = [
+        { 
+          label: 'Вставить', 
+          action: async () => {
+            try {
+              const text = await navigator.clipboard.readText();
+              if (text && (inputEl.tagName === 'INPUT' || inputEl.tagName === 'TEXTAREA')) {
+                const start = inputEl.selectionStart;
+                const end = inputEl.selectionEnd;
+                const val = inputEl.value;
+                inputEl.value = val.slice(0, start) + text + val.slice(end);
+                inputEl.selectionStart = inputEl.selectionEnd = start + text.length;
+                inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+                inputEl.focus();
+              }
+            } catch (err) {
+              console.error('Failed to paste: ', err);
+            }
+          }
+        }
+      ];
+    } else if (gameCard) {
       const appId = gameCard.querySelector('.play-btn')?.getAttribute('data-appid');
       const gameName = gameCard.querySelector('h3')?.textContent;
       if (appId) {

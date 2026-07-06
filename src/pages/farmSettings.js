@@ -1,4 +1,5 @@
 import toast from '../utils/toast.js';
+import store from '../store/index.js';
 
 export function renderFarmSettings() {
   const container = document.createElement('div');
@@ -145,13 +146,89 @@ export function renderFarmSettings() {
             </div>
         </div>
       </section>
-      
-      <button id="save-btn" style="padding: 10px 24px; font-size: 14px; font-weight: 600; background: var(--color-accent-green); border-radius: var(--radius-sm); color: var(--color-bg-base); cursor: pointer; border: none; transition: transform var(--transition-fast);">
-        Сохранить параметры
-      </button>
+
+      <div style="display: flex; gap: 16px; margin-top: 24px;">
+        <button id="save-btn" style="padding: 10px 24px; font-size: 14px; font-weight: 600; background: var(--color-accent-green); border-radius: var(--radius-sm); color: var(--color-bg-base); cursor: pointer; border: none; transition: transform var(--transition-fast);">
+          Сохранить параметры
+        </button>
+      </div>
+
+      <!-- Резервное копирование данных -->
+      <section style="margin-top: 40px; border-top: 1px solid var(--color-border); padding-top: 32px; margin-bottom: 32px;">
+        <h3 style="color: var(--color-text-secondary); font-size: 12px; letter-spacing: 1px; margin-bottom: 16px; text-transform: uppercase;">
+          Резервное копирование
+        </h3>
+        
+        <div style="display: flex; gap: 16px; background: var(--color-bg-surface); padding: 16px; border-radius: 8px; border: 1px solid var(--color-border); align-items: center; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 500;">Экспорт и импорт параметров</div>
+            <div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 4px;">
+              Экспортируйте настройки, статистику и списки игр в файл резервной копии. Авторизация и сессии будут сброшены после импорта в целях безопасности.
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px; flex-shrink: 0;">
+            <button id="export-btn" style="padding: 10px 16px; font-size: 14px; font-weight: 600; background: var(--color-bg-base); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-primary); cursor: pointer; transition: transform var(--transition-fast);">
+              Экспорт
+            </button>
+            <button id="import-btn" style="padding: 10px 16px; font-size: 14px; font-weight: 600; background: var(--color-bg-base); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-primary); cursor: pointer; transition: transform var(--transition-fast);">
+              Импорт
+            </button>
+          </div>
+        </div>
+      </section>
     `;
 
     container.querySelector('#save-btn').addEventListener('click', handleSave);
+
+    async function handleExport() {
+      try {
+        const auth = store.get('auth');
+        const steamId = auth?.steamId || store.get('user')?.steamId || null;
+        const btn = container.querySelector('#export-btn');
+        if (btn) btn.disabled = true;
+
+        const result = await window.electronAuth.backupExport(steamId);
+        if (result.success) {
+          toast.show('Резервная копия успешно создана!', 'success');
+        } else if (result.reason !== 'cancelled') {
+          toast.show(`Ошибка экспорта: ${result.error}`, 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        toast.show('Ошибка экспорта данных', 'error');
+      } finally {
+        const btn = container.querySelector('#export-btn');
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function handleImport() {
+      try {
+        const auth = store.get('auth');
+        const steamId = auth?.steamId || store.get('user')?.steamId || null;
+        const btn = container.querySelector('#import-btn');
+        if (btn) btn.disabled = true;
+
+        const result = await window.electronAuth.backupImport(steamId);
+        if (result.success) {
+          toast.show('Данные успешно импортированы!', 'success');
+          await window.electronAuth.clearSessions();
+          alert('Импорт успешно завершен! В целях безопасности все сессии сброшены. Пожалуйста, войдите в Steam и Epic Games Store заново.');
+          window.location.reload();
+        } else if (result.reason !== 'cancelled') {
+          alert(`Не удалось импортировать данные: ${result.error}`);
+        }
+      } catch (err) {
+        console.error(err);
+        toast.show('Ошибка импорта данных', 'error');
+      } finally {
+        const btn = container.querySelector('#import-btn');
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    container.querySelector('#export-btn').addEventListener('click', handleExport);
+    container.querySelector('#import-btn').addEventListener('click', handleImport);
   }
 
   loadData();

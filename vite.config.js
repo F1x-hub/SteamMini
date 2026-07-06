@@ -45,6 +45,13 @@ export default defineConfig({
         target: 'https://open.er-api.com',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/rates/, '')
+      },
+
+      '/api/ggdeals': {
+        target: 'https://api.gg.deals',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/ggdeals/, ''),
+        secure: true
       }
     }
   }

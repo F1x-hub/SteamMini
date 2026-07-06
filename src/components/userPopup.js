@@ -1,7 +1,9 @@
+import { icons } from '../utils/icons.js';
 import storage from '../utils/storage.js';
 import store from '../store/index.js';
 import router from '../router/index.js';
 import { createDropdown } from './dropdown.js';
+import toast from '../utils/toast.js';
 
 export function createUserPopup() {
   const container = document.createElement('div');
@@ -25,14 +27,14 @@ export function createUserPopup() {
       </div>
       
       <div class="popup-body">
-        <section class="settings-section">
+        <section class="settings-section" id="set-sec-account">
           <h3>Account</h3>
           <div class="account-summary" id="account-summary">
             <!-- Populated by JS -->
           </div>
         </section>
 
-        <section class="settings-section">
+        <section class="settings-section" id="set-sec-integration">
           <h3>Steam Integration</h3>
           <p class="settings-desc">Enter your Steam credentials to fetch your library and wishlist.</p>
           
@@ -42,7 +44,7 @@ export function createUserPopup() {
           </div>
         </section>
 
-        <section class="settings-section">
+        <section class="settings-section" id="set-sec-preferences">
           <h3>Preferences</h3>
           <div class="input-group row-group">
             <label>Theme</label>
@@ -66,7 +68,34 @@ export function createUserPopup() {
           </div>
         </section>
 
-        <section class="settings-section">
+        <section class="settings-section" id="set-sec-backup">
+          <h3>Backup & Restore</h3>
+          <p class="settings-desc">Экспортируйте или импортируйте настройки и данные приложения.</p>
+          <div style="display: flex; gap: 8px; margin-top: 8px;">
+            <button id="export-btn-popup" style="
+              flex: 1; padding: 10px 12px;
+              background: rgba(255,255,255,0.03);
+              border: 1px solid var(--color-border);
+              border-radius: var(--radius-sm);
+              color: var(--color-text-primary);
+              font-size: 0.85rem; font-family: inherit;
+              cursor: pointer;
+              transition: all var(--transition-fast);
+            ">Экспорт</button>
+            <button id="import-btn-popup" style="
+              flex: 1; padding: 10px 12px;
+              background: rgba(255,255,255,0.03);
+              border: 1px solid var(--color-border);
+              border-radius: var(--radius-sm);
+              color: var(--color-text-primary);
+              font-size: 0.85rem; font-family: inherit;
+              cursor: pointer;
+              transition: all var(--transition-fast);
+            ">Импорт</button>
+          </div>
+        </section>
+
+        <section class="settings-section" id="set-sec-autofarm">
           <h3>Auto-Farm</h3>
           <p class="settings-desc">Параметры двухфазного фарма карточек (Idle Master Extended)</p>
           <div class="input-group row-group">
@@ -91,7 +120,7 @@ export function createUserPopup() {
           </div>
         </section>
 
-        <section class="settings-section" style="margin-bottom: 0;">
+        <section class="settings-section" id="set-sec-about" style="margin-bottom: 0;">
           <h3 style="text-transform: uppercase;">О приложении</h3>
           <div class="account-summary" style="flex-direction: column; align-items: stretch; gap: 8px; margin-bottom: 0;">
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0;">
@@ -106,8 +135,34 @@ export function createUserPopup() {
               </div>
               <button id="btn-check-update-popup" class="btn-check-update">Проверить обновление</button>
             </div>
+            <div style="height: 1px; background: var(--color-border); margin: 0;"></div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0;">
+              <span style="font-weight: 500;">Авто-загрузка обновлений</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="auto-update-toggle">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
           </div>
         </section>
+
+        <div style="height:1px;background:rgba(255,255,255,0.08);margin:8px 0"></div>
+        <button id="btn-send-report" style="
+          display: flex; align-items: center; gap: 8px;
+          width: 100%; padding: 10px 12px;
+          background: rgba(255,255,255,0.03);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-sm);
+          color: var(--color-text-secondary);
+          font-size: 0.85rem; font-family: inherit;
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        ">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+          <span>Отправить отчёт</span>
+        </button>
       </div>
       
       <div class="popup-footer">
@@ -117,157 +172,7 @@ export function createUserPopup() {
     </div>
   `;
 
-  // Attach styles dynamically for encapsulation
-  const style = document.createElement('style');
-  style.textContent = `
-    .user-popup-overlay {
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.6);
-      backdrop-filter: blur(4px);
-      display: none; /* Hidden by default */
-      justify-content: center;
-      align-items: center;
-      z-index: 10001;
-    }
-    .user-popup-overlay[data-open="true"] {
-      display: flex; /* Show when data-open is true */
-    }
-    .user-popup-content {
-      background: var(--color-bg-surface);
-      border: 1px solid var(--color-border);
-      border-radius: var(--radius-md);
-      width: 440px;
-      max-width: 90vw;
-      box-shadow: var(--shadow-md);
-      display: flex;
-      flex-direction: column;
-    }
-    .popup-header {
-      padding: var(--spacing-lg);
-      border-bottom: 1px solid var(--color-border);
-      background: rgba(255, 255, 255, 0.02);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .popup-header h2 { margin: 0; font-size: 1.15rem; font-weight: 600; letter-spacing: -0.01em; }
-    .close-btn {
-      background: transparent; border: none; font-size: 1.5rem; line-height: 1; padding: 0 4px; color: var(--color-text-secondary); border-radius: var(--radius-sm);
-    }
-    .close-btn:hover { color: var(--color-text-primary); background: var(--color-bg-surface-light); }
-    
-    .popup-body {
-      padding: var(--spacing-lg);
-      max-height: 60vh;
-      overflow-y: auto;
-    }
-    .settings-section {
-      margin-bottom: var(--spacing-xl);
-    }
-    .account-summary {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      padding: 12px;
-      background: var(--color-bg-base);
-      border: 1px solid var(--color-border);
-      border-radius: var(--radius-sm);
-      margin-bottom: var(--spacing-lg);
-    }
-    .account-avatar {
-      width: 48px; height: 48px; border-radius: var(--radius-sm);
-      background-size: cover; background-position: center; background-repeat: no-repeat;
-      background-color: var(--color-border);
-      border: 1px solid var(--color-border);
-    }
-    .account-details {
-      display: flex; flex-direction: column; flex: 1; overflow: hidden;
-    }
-    .account-name { font-weight: 600; font-size: 1rem; color: var(--color-text-primary); white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
-    .account-id { font-size: 0.8rem; color: var(--color-text-secondary); font-family: monospace; margin-top: 2px; }
-    .account-status {
-      font-size: 0.8rem; font-weight: 500; display: flex; align-items: center; gap: 4px; border-left: 1px solid var(--color-border); padding-left: 16px;
-    }
-    .status-ok { color: var(--color-success); }
-    .status-error { color: var(--color-danger); }
-    .settings-section h3 {
-      font-size: 0.95rem;
-      font-weight: 600;
-      color: var(--color-text-primary);
-      margin-bottom: var(--spacing-xs);
-      margin-top: 0;
-    }
-    .settings-desc {
-      font-size: 0.85rem;
-      color: var(--color-text-secondary);
-      margin-bottom: var(--spacing-md);
-    }
-    .input-group {
-      display: flex;
-      flex-direction: column;
-      margin-bottom: var(--spacing-md);
-    }
-    .row-group {
-      flex-direction: row; align-items: center; justify-content: space-between;
-      padding: 8px 0;
-    }
-    .input-group label {
-      font-size: 0.85rem; font-weight: 500; margin-bottom: 6px; color: var(--color-text-secondary);
-    }
-    .input-group input {
-      background: var(--color-bg-base);
-      border: 1px solid var(--color-border);
-      color: var(--color-text-primary);
-      padding: 10px 12px;
-      border-radius: var(--radius-sm);
-      font-family: inherit; font-size: 0.9rem;
-      transition: border-color var(--transition-fast);
-      outline: none;
-    }
-    .input-group input:focus {
-      border-color: var(--color-action-primary);
-    }
-    .popup-footer {
-      padding: var(--spacing-md) var(--spacing-lg);
-      border-top: 1px solid var(--color-border);
-      background: rgba(255, 255, 255, 0.02);
-      display: flex;
-      justify-content: flex-end;
-    }
-    .btn-primary {
-      background: var(--color-action-primary); color: var(--color-bg-base); font-weight: 500; border: none; border-radius: var(--radius-sm); padding: 8px 16px;
-    }
-    .btn-primary:hover { background: var(--color-action-hover); }
-    
-    .btn-check-update {
-      padding: 8px 16px;
-      border-radius: var(--radius-md);
-      border: 1px solid var(--color-border);
-      background: rgba(255,255,255,0.03);
-      color: var(--color-text-primary);
-      font-size: 13px;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: all var(--transition-fast);
-      flex-shrink: 0;
-    }
-    .btn-check-update:hover:not(:disabled) {
-      background: rgba(255,255,255,0.08);
-      border-color: var(--color-action-primary);
-    }
-    .btn-check-update:active:not(:disabled) {
-      transform: scale(0.97);
-    }
-    .btn-check-update:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-    .update-available { color: var(--color-action-primary); }
-    .update-ok        { color: var(--color-success, #4caf50); }
-    .update-error     { color: var(--color-danger,  #f44336); }
-  `;
-  container.appendChild(style);
+
 
   // Initialize dropdowns
   const themeDropdown = createDropdown({
@@ -307,6 +212,74 @@ export function createUserPopup() {
   closeBtn.addEventListener('click', () => {
     store.set('settingsOpen', false);
   });
+
+  // Backup & Restore button handlers
+  const exportBtnPopup = container.querySelector('#export-btn-popup');
+  const importBtnPopup = container.querySelector('#import-btn-popup');
+
+  if (exportBtnPopup) {
+    exportBtnPopup.addEventListener('mouseenter', () => {
+      exportBtnPopup.style.background = 'rgba(255,255,255,0.08)';
+      exportBtnPopup.style.borderColor = 'var(--color-action-primary)';
+    });
+    exportBtnPopup.addEventListener('mouseleave', () => {
+      exportBtnPopup.style.background = 'rgba(255,255,255,0.03)';
+      exportBtnPopup.style.borderColor = 'var(--color-border)';
+    });
+    exportBtnPopup.addEventListener('click', async () => {
+      try {
+        const auth = store.get('auth');
+        const steamId = auth?.steamId || store.get('user')?.steamId || null;
+        exportBtnPopup.disabled = true;
+
+        const result = await window.electronAuth.backupExport(steamId);
+        if (result.success) {
+          toast.show('Резервная копия успешно создана!', 'success');
+        } else if (result.reason !== 'cancelled') {
+          toast.show(`Ошибка экспорта: ${result.error}`, 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        toast.show('Ошибка экспорта данных', 'error');
+      } finally {
+        exportBtnPopup.disabled = false;
+      }
+    });
+  }
+
+  if (importBtnPopup) {
+    importBtnPopup.addEventListener('mouseenter', () => {
+      importBtnPopup.style.background = 'rgba(255,255,255,0.08)';
+      importBtnPopup.style.borderColor = 'var(--color-action-primary)';
+    });
+    importBtnPopup.addEventListener('mouseleave', () => {
+      importBtnPopup.style.background = 'rgba(255,255,255,0.03)';
+      importBtnPopup.style.borderColor = 'var(--color-border)';
+    });
+    importBtnPopup.addEventListener('click', async () => {
+      try {
+        const auth = store.get('auth');
+        const steamId = auth?.steamId || store.get('user')?.steamId || null;
+        importBtnPopup.disabled = true;
+
+        const result = await window.electronAuth.backupImport(steamId);
+        if (result.success) {
+          toast.show('Данные успешно импортированы!', 'success');
+          store.set('settingsOpen', false);
+          await window.electronAuth.clearSessions();
+          alert('Импорт успешно завершен! В целях безопасности все сессии сброшены. Пожалуйста, войдите в Steam и Epic Games Store заново.');
+          window.location.reload();
+        } else if (result.reason !== 'cancelled') {
+          alert(`Не удалось импортировать данные: ${result.error}`);
+        }
+      } catch (err) {
+        console.error(err);
+        toast.show('Ошибка импорта данных', 'error');
+      } finally {
+        importBtnPopup.disabled = false;
+      }
+    });
+  }
   
   // Startup toggle logic
   container.querySelector('#startup-toggle').addEventListener('change', (e) => {
@@ -323,11 +296,11 @@ export function createUserPopup() {
     }
   });
 
-  container.querySelector('#logout-btn').addEventListener('click', () => {
-    store.logout();
+  container.querySelector('#logout-btn').addEventListener('click', async () => {
     store.set('settingsOpen', false);
-    window.location.reload();
+    await store.logout();
   });
+
 
   // Update logic
   const initUpdateLogic = async () => {
@@ -385,6 +358,44 @@ export function createUserPopup() {
   };
   initUpdateLogic();
 
+  // Report button logic
+  const reportBtn = container.querySelector('#btn-send-report');
+  if (reportBtn) {
+    reportBtn.addEventListener('mouseenter', () => {
+      reportBtn.style.background = 'rgba(255,255,255,0.08)';
+      reportBtn.style.borderColor = 'var(--color-action-primary)';
+      reportBtn.style.color = 'var(--color-text-primary)';
+    });
+    reportBtn.addEventListener('mouseleave', () => {
+      reportBtn.style.background = 'rgba(255,255,255,0.03)';
+      reportBtn.style.borderColor = 'var(--color-border)';
+      reportBtn.style.color = 'var(--color-text-secondary)';
+    });
+    reportBtn.addEventListener('click', async () => {
+      reportBtn.disabled = true;
+      reportBtn.style.opacity = '0.6';
+      reportBtn.querySelector('span').textContent = 'Отправка...';
+
+      const result = await window.electronAuth.sendReport();
+
+      if (result.ok) {
+        reportBtn.querySelector('span').textContent = '✓ Отправлено';
+        reportBtn.style.color = 'var(--color-success, #4caf50)';
+      } else {
+        reportBtn.querySelector('span').textContent = '✗ Ошибка';
+        reportBtn.style.color = 'var(--color-danger, #f44336)';
+        console.error('[sendReport]', result.error);
+      }
+
+      setTimeout(() => {
+        reportBtn.disabled = false;
+        reportBtn.style.opacity = '1';
+        reportBtn.querySelector('span').textContent = 'Отправить отчёт';
+        reportBtn.style.color = 'var(--color-text-secondary)';
+      }, 3000);
+    });
+  }
+
   container.querySelector('#save-settings').addEventListener('click', () => {
     const steamId = container.querySelector('#steam-id').value.trim();
     const theme = themeDropdown.__getValue();
@@ -402,6 +413,7 @@ export function createUserPopup() {
     const closeBehavior = closeDropdown.__getValue();
     const startMinimized = container.querySelector('#startup-minimized-toggle').checked;
     const runOnStartup = container.querySelector('#startup-toggle').checked;
+    const autoUpdate = container.querySelector('#auto-update-toggle').checked;
 
     if (steamId) {
       store.loginManual({ steamId });
@@ -414,6 +426,8 @@ export function createUserPopup() {
     if (closeBehavior === 'prompt') delete prefs.closeBehavior;
     else prefs.closeBehavior = closeBehavior;
     prefs.startMinimized = startMinimized;
+    prefs.autoDownloadUpdates = autoUpdate;
+    window.electronAuth.setAutoDownload?.(autoUpdate);
     
     storage.set('preferences', prefs);
     storage.set('farmConfig', farmConfig);
@@ -441,6 +455,17 @@ export function createUserPopup() {
   });
 
   function loadFormData() {
+    const isAuth = store.get('isAuthenticated');
+    const secAccount = container.querySelector('#set-sec-account');
+    const secIntegration = container.querySelector('#set-sec-integration');
+    const secFarm = container.querySelector('#set-sec-autofarm');
+    const logoutBtn = container.querySelector('#logout-btn');
+    
+    if (secAccount) secAccount.style.display = isAuth ? 'block' : 'none';
+    if (secIntegration) secIntegration.style.display = isAuth ? 'block' : 'none';
+    if (secFarm) secFarm.style.display = isAuth ? 'block' : 'none';
+    if (logoutBtn) logoutBtn.style.display = isAuth ? 'block' : 'none';
+
     const creds = storage.getDecrypted('steam_credentials') || {};
     const prefs = storage.get('preferences') || { theme: 'dark', lang: 'en' };
     const fc = storage.get('farmConfig') || {};
@@ -451,6 +476,9 @@ export function createUserPopup() {
     container.querySelector('#fc-p1-threshold').value = fc.phase1_hours_threshold ?? 2;
     container.querySelector('#fc-p2-restart').value = fc.phase2_restart_interval ?? 5;
     container.querySelector('#fc-p2-stall').value = fc.phase2_stall_timeout ?? 30;
+    
+    const autoUpdateToggle = container.querySelector('#auto-update-toggle');
+    if (autoUpdateToggle) autoUpdateToggle.checked = !!prefs.autoDownloadUpdates;
     
     const user = store.get('user');
     const summaryContainer = container.querySelector('#account-summary');
@@ -463,7 +491,7 @@ export function createUserPopup() {
           <div class="account-id">ID: ${user.steamId || creds.steamId || 'N/A'}</div>
         </div>
         <div class="account-status status-ok">
-          ✅ Connected
+          ${icons.check} Connected
         </div>
       `;
       summaryContainer.style.display = 'flex';
@@ -476,7 +504,7 @@ export function createUserPopup() {
             <div class="account-id">ID: ${creds.steamId || 'N/A'}</div>
           </div>
           <div class="account-status status-error">
-            ❌ Error Fetching
+            ${icons.error} Error Fetching
           </div>
         `;
         summaryContainer.style.display = 'flex';

@@ -1,8 +1,8 @@
 import path from 'path';
 import fs from 'fs';
 import { app, BrowserWindow, Notification, session } from 'electron';
-import { httpsGet } from '../utils/helpers.js';
-import { egsDirectLogin, checkEgsSession } from '../auth/egsLogin.js';
+import { httpsGet, steamFetchWithRetry } from '../utils/helpers.js';
+import { egsDirectLogin, checkEgsSession, refreshEpicSession } from '../auth/egsLogin.js';
 import { claimEgsGame } from '../egsClaimer.js';
 
 /**
@@ -62,9 +62,18 @@ function saveClaimedGame(appId) {
     JSON.stringify([..._claimedGames]), 'utf8');
 }
 
+export function restoreClaimedGames(gamesList) {
+  _claimedGames.clear();
+  if (Array.isArray(gamesList)) {
+    gamesList.forEach(id => _claimedGames.add(String(id)));
+  }
+  fs.writeFileSync(_CLAIMED_FILE,
+    JSON.stringify([..._claimedGames]), 'utf8');
+}
+
 // ─── Settings ─────────────────────────────────────────────────────
 
-function loadFreeGamesSettings() {
+export function loadFreeGamesSettings() {
   try {
     if (fs.existsSync(FREE_GAMES_SETTINGS_FILE)) {
       const raw = fs.readFileSync(FREE_GAMES_SETTINGS_FILE, 'utf8');
@@ -80,12 +89,35 @@ function loadFreeGamesSettings() {
   return { ...FREE_GAMES_SETTINGS_DEFAULT };
 }
 
-function saveFreeGamesSettings(settings) {
+export function saveFreeGamesSettings(settings) {
   fs.writeFileSync(FREE_GAMES_SETTINGS_FILE,
     JSON.stringify(settings, null, 2), 'utf8');
 }
 
 // ─── Fetchers ─────────────────────────────────────────────────────
+
+let _ownedSteamAppIds = new Set();
+let _ownedSteamAppsFetched = 0;
+
+async function fetchOwnedSteamGames() {
+  if (Date.now() - _ownedSteamAppsFetched < 60 * 60 * 1000) return _ownedSteamAppIds;
+  try {
+    const res = await steamFetchWithRetry('https://store.steampowered.com/dynamicstore/userdata/', {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    });
+    if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.rgOwnedApps)) {
+            _ownedSteamAppIds = new Set(data.rgOwnedApps.map(String));
+            _ownedSteamAppsFetched = Date.now();
+            console.log(`[freeGames] Fetched ${data.rgOwnedApps.length} owned Steam apps from userdata`);
+        }
+    }
+  } catch(e) {
+    console.error('[freeGames] Error fetching userdata:', e.message);
+  }
+  return _ownedSteamAppIds;
+}
 
 function extractSteamAppId(url) {
   const match = (url ?? '').match(
@@ -96,7 +128,7 @@ function extractSteamAppId(url) {
 
 async function searchSteamAppId(title) {
   try {
-    const cleanTitle = title.replace(/\(Steam\)/i, '').replace(/Giveaway/i, '').replace(/Free/i, '').trim();
+    const cleanTitle = title.replace(/\([^)]+\)/g, '').replace(/Giveaway/i, '').replace(/Free/i, '').trim();
     if (!cleanTitle) return null;
     
     const res = await httpsGet({
@@ -107,8 +139,15 @@ async function searchSteamAppId(title) {
     
     const data = JSON.parse(res.body);
     if (data.items && data.items.length > 0) {
-      const steamApp = data.items.find(i => i.type === 'app') || data.items[0];
-      if (steamApp) return String(steamApp.id);
+      const exactMatch = data.items.find(i => i.type === 'app' && i.name.toLowerCase() === cleanTitle.toLowerCase());
+      if (exactMatch) return String(exactMatch.id);
+
+      // Fallback: только если первое слово совпадает (избегаем DLC / похожих игр)
+      const firstWord = cleanTitle.toLowerCase().split(' ')[0];
+      const partialMatch = data.items.find(
+        i => i.type === 'app' && i.name.toLowerCase().startsWith(firstWord)
+      );
+      if (partialMatch) return String(partialMatch.id);
     }
   } catch(err) {
     console.error(`[gamerpower] Steam search failed for "${title}":`, err.message);
@@ -236,8 +275,12 @@ async function getFreeSteamSubId(appId) {
       }
     }
 
-    if (appData.is_free) {
-      const firstSub = groups[0]?.subs?.[0]?.packageid;
+    if (appData.is_free && groups.length > 0) {
+      const freeGroup = groups[0];
+      let freeSub = freeGroup.subs?.find(s => s.price_in_cents_with_discount === 0);
+      if (freeSub) return freeSub.packageid;
+
+      const firstSub = freeGroup.subs?.[0]?.packageid;
       if (firstSub) return firstSub;
     }
 
@@ -250,7 +293,7 @@ async function getFreeSteamSubId(appId) {
 
 async function claimSteamGame(appId, manualSubId) {
   let subId = manualSubId ?? await getFreeSteamSubId(appId);
-  if (!subId) return { error: 'Не удалось найти package ID' };
+  // We proceed even if subId is missing to check for ownership on the page as a fallback
 
   const ses = session.defaultSession;
   console.log(`[claim] BrowserWindow: appId=${appId} subId=${subId}`);
@@ -278,10 +321,49 @@ async function claimSteamGame(appId, manualSubId) {
 
         const result = await win.webContents.executeJavaScript(`
           (async () => {
+            async function checkOwnership() {
+              // 1. Global JS state check (most reliable)
+              const rgOwned = window.g_rgOwnedApps || (window.GDynamicStore && window.GDynamicStore.s_rgOwnedApps);
+              if (Array.isArray(rgOwned) && rgOwned.map(String).includes("${appId}")) {
+                return { alreadyOwned: true, via: 'global_state' };
+              }
+              
+              // 2. DOM Selector check
+              const ownedSelectors = '.ds_owned, .already_in_library, .btn_addtocart_upper_area .already_owned, .game_area_already_owned, .library_banner, .ds_flag.ds_owned';
+              if (document.querySelector(ownedSelectors)) {
+                return { alreadyOwned: true, via: 'dom_selector' };
+              }
+              
+              // 3. Text content check
+              const bodyText = document.body.innerText.toLowerCase();
+              if (bodyText.includes('already in your steam library') || 
+                  bodyText.includes('уже есть в вашей библиотеке') ||
+                  bodyText.includes('уже в библиотеке')) {
+                return { alreadyOwned: true, via: 'text_content' };
+              }
+              return null;
+            }
+
             try {
+              // Poll for up to 3 seconds for dynamic/React content to load
+              for (let i = 0; i < 6; i++) {
+                const owned = await checkOwnership();
+                if (owned) {
+                  console.log('[claim-js] Product recognized as already owned via ' + owned.via);
+                  return owned;
+                }
+                if (i < 5) await new Promise(r => setTimeout(r, 500));
+              }
+
+              // If no subId was provided, and we're not owned, we can't proceed with claim
+              const subId = ${subId || 'null'};
+              if (!subId) {
+                return { error: 'no_package_id', needsManualClaim: true };
+              }
+
               if (typeof AddFreeLicense === 'function') {
                 console.log('[claim-js] Found AddFreeLicense function')
-                AddFreeLicense(${subId}, null)
+                AddFreeLicense(subId, null)
                 await new Promise(r => setTimeout(r, 3000))
                 return { success: true, method: 'AddFreeLicense' }
               }
@@ -332,6 +414,10 @@ async function claimSteamGame(appId, manualSubId) {
 
         console.log('[claim] JS result:', JSON.stringify(result));
 
+        if (result.alreadyOwned) return resolve({ success: false, alreadyOwned: true });
+        if (result.error === 'no_package_id') {
+          return resolve({ error: 'Не удалось найти package ID (возможно, требуется ключ)', needsManual: true });
+        }
         if (result.error) return resolve({ error: result.error });
         if (result.success) return resolve({ success: true });
 
@@ -387,6 +473,7 @@ async function autoClaimFreeGames() {
   if (!settings.autoClaim?.enabled) return;
 
   console.log('[autoClaim] Checking for free games to claim...');
+  let claimedAny = false;
 
   try {
     const epicGames     = settings.platforms.epic
@@ -396,6 +483,8 @@ async function autoClaimFreeGames() {
     const allGames = [...epicGames, ...gamerPower];
 
     // 1. Steam games
+    const ownedSteamApps = await fetchOwnedSteamGames();
+
     const steamGames = allGames.filter(g => {
       const platform = (g.platform ?? '').toLowerCase();
       return platform.includes('steam') && (g.steamAppId || g.canAutoClaim);
@@ -407,7 +496,16 @@ async function autoClaimFreeGames() {
       const appId = game.steamAppId ?? game.appId;
       if (!appId) continue;
 
-      if (_claimedGames.has(String(appId))) continue;
+      if (_claimedGames.has(String(appId)) || ownedSteamApps.has(String(appId))) {
+        if (ownedSteamApps.has(String(appId)) && !_claimedGames.has(String(appId))) {
+          saveClaimedGame(appId);
+        }
+        continue;
+      }
+
+      if (_claimedGames.has(String(game.id))) {
+        continue;
+      }
 
       if (settings.autoClaim.notifyBefore) {
         new Notification({
@@ -421,12 +519,20 @@ async function autoClaimFreeGames() {
 
       if (result.success || result.alreadyOwned) {
         saveClaimedGame(appId);
-        if (result.success && settings.autoClaim.notifyAfter) {
-          new Notification({
-            title: `✓ Получено: ${game.title}`,
-            body:  `Игра добавлена в Steam библиотеку!`,
-          }).show();
+        if (result.success) {
+          claimedAny = true;
+          if (settings.autoClaim.notifyAfter) {
+            new Notification({
+              title: `✓ Получено: ${game.title}`,
+              body:  `Игра добавлена в Steam библиотеку!`,
+            }).show();
+          }
+        } else {
+          console.log(`[autoClaim] Steam: "${game.title}" was already in library — sync check passed`);
         }
+      } else if (result.needsManual) {
+        console.log(`[autoClaim] Steam: "${game.title}" needs manual claim (No free sub found, likely a key giveaway)`);
+        saveClaimedGame(game.id);
       } else {
         console.error(`[autoClaim] Failed: ${game.title} — ${result.msg || result.error}`);
       }
@@ -463,10 +569,11 @@ async function autoClaimFreeGames() {
               if (result.alreadyOwned) {
                 console.log(`[autoClaim] EGS: "${game.title}" already in library — skipped`);
               } else {
-                console.log(`[autoClaim] ✅ EGS: "${game.title}" claimed successfully!`);
+                claimedAny = true;
+                console.log(`[autoClaim] [OK] EGS: "${game.title}" claimed successfully!`);
                 if (settings.autoClaim.notifyAfter) {
                   new Notification({
-                    title: `✅ Получена (EGS): ${game.title}`,
+                    title: `[OK] Получена (EGS): ${game.title}`,
                     body:  `Игра добавлена на ваш аккаунт Epic Games.`,
                   }).show();
                 }
@@ -482,6 +589,10 @@ async function autoClaimFreeGames() {
     }
 
     console.log('[autoClaim] Done');
+    
+    if (claimedAny && _mainWindow && !_mainWindow.isDestroyed()) {
+      _mainWindow.webContents.send('free-games:refresh-needed');
+    }
 
   } catch (err) {
     console.error('[autoClaim] Error:', err.message);
@@ -491,12 +602,17 @@ async function autoClaimFreeGames() {
 // ─── Polling & Notifications ──────────────────────────────────────
 
 let _autoClaimTimer = null;
+let _egsRefreshTimer = null;
 let _shownFreeGames = new Set();
 
 function restartFreeGamesPolling() {
   if (_autoClaimTimer) {
     clearInterval(_autoClaimTimer);
     _autoClaimTimer = null;
+  }
+  if (_egsRefreshTimer) {
+    clearInterval(_egsRefreshTimer);
+    _egsRefreshTimer = null;
   }
   
   const settings = loadFreeGamesSettings();
@@ -506,6 +622,17 @@ function restartFreeGamesPolling() {
     checkFreeGamesAndNotify();
     autoClaimFreeGames();
   }, settings.checkInterval * 60 * 60 * 1000);
+
+  // EGS Session Auto-Refresh mechanism (every 30 minutes)
+  if (settings.platforms?.epic && settings.autoClaim?.egsEnabled) {
+    console.log(`[EGS] Auto-refresh enabled: every 30 minutes`);
+    _egsRefreshTimer = setInterval(async () => {
+      const hasSession = await checkEgsSession();
+      if (hasSession) {
+        await refreshEpicSession();
+      }
+    }, 30 * 60 * 1000); // 30 mins
+  }
 }
 
 async function checkFreeGamesAndNotify() {
@@ -570,7 +697,7 @@ async function checkFreeGamesAndNotify() {
         _shownFreeGames.add(game.id);
 
         new Notification({
-          title: `🎮 Бесплатная игра: ${game.title}`,
+          title: `[GAME] Бесплатная игра: ${game.title}`,
           body:  `${game.platform}${game.endDate ? ` · до ${game.endDate}` : ''}`,
           icon:  path.join(__dirname, '..', '..', 'build', 'icon.png'),
         }).show();
@@ -596,9 +723,10 @@ export function startFreeGamesPolling() {
   restartFreeGamesPolling();
 }
 
-// ─── Registration ─────────────────────────────────────────────────
+let _mainWindow = null;
 
-export function register(ipcMain) {
+export function register(ipcMain, { mainWindow } = {}) {
+  _mainWindow = mainWindow;
   ipcMain.handle('free-games:get-settings', () => loadFreeGamesSettings());
 
   ipcMain.handle('free-games:save-settings', (_, settings) => {
@@ -637,9 +765,10 @@ export function register(ipcMain) {
   ipcMain.handle('free-games:get', async () => {
     const settings = loadFreeGamesSettings();
 
-    const [epicGames, gamerPowerGames] = await Promise.all([
+    const [epicGames, gamerPowerGames, ownedSteamApps] = await Promise.all([
       settings.platforms.epic ? fetchEpicFreeGames() : [],
       fetchGamerPowerGames(),
+      fetchOwnedSteamGames()
     ]);
 
     const platformMap = {
@@ -691,9 +820,19 @@ export function register(ipcMain) {
 
     const all = [...epicGames, ...filtered].map(g => {
       const appIdStr = String(g.steamAppId || g.id);
+      const isSteam = (g.platform || '').toLowerCase().includes('steam');
+      const isOwnedSteam = isSteam && ownedSteamApps.has(appIdStr);
+      
+      const claimed = _claimedGames.has(appIdStr)
+        || _claimedGames.has(String(g.id))
+        || isOwnedSteam;
+      if (isOwnedSteam && !_claimedGames.has(appIdStr)) {
+         saveClaimedGame(appIdStr);
+      }
+
       return {
         ...g,
-        isClaimed: _claimedGames.has(appIdStr)
+        isClaimed: claimed
       };
     });
 

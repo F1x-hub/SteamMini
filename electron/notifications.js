@@ -23,7 +23,7 @@ export function notifyAllCardsReceived(gameName) {
   if (!Notification.isSupported()) return;
 
   new Notification({
-    title: '✅ Все карточки получены',
+    title: '[OK] Все карточки получены',
     body: `${gameName} — все карточки собраны`,
     icon: ICON,
     silent: false,

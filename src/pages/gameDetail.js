@@ -1,3 +1,4 @@
+import { icons } from '../utils/icons.js';
 import steamApi from '../api/steam.js';
 import store from '../store/index.js';
 import router from '../router/index.js';
@@ -7,6 +8,8 @@ import { CACHE_TTL } from '../utils/cacheTTL.js';
 import toast from '../utils/toast.js';
 import { createDropdown } from '../components/dropdown.js';
 import { createGameCardsBlock } from '../components/GameCardsBlock.js';
+import { renderPriceWidget } from '../components/priceWidget.js';
+import { getHLTBTime } from '../api/hltb.js';
 
 const REGIONS = [
   { code: 'US', name: 'США' },
@@ -20,6 +23,7 @@ const REGIONS = [
   { code: 'CN', name: 'Китай' },
   { code: 'BR', name: 'Бразилия' },
   { code: 'RU', name: 'Россия' },
+  { code: 'FI', name: 'Финляндия' },
 ];
 
 let currentMediaItems = [];
@@ -30,6 +34,58 @@ let navigationHistory = [];
 let historyIndex = -1;
 let navBarElement = null;
 let unsubscribeRoute = null;
+
+/**
+ * Renders HLTB (How Long To Beat) completion times below the Play button block.
+ * Three states: loading → not found / no data → data row.
+ */
+async function renderHLTBBlock(container, appId, gameName) {
+  const block = document.createElement('div');
+  block.className = 'hltb-block';
+  block.innerHTML = `<span class="hltb-loading">${icons.loading} Загрузка...</span>`;
+  
+  const btnSlot = container.querySelector('.detail-btn-slot');
+  if (btnSlot) {
+    container.insertBefore(block, btnSlot);
+  } else {
+    container.appendChild(block);
+  }
+
+  const data = await getHLTBTime(appId, gameName);
+
+  // Game not found in HLTB database (404)
+  if (!data || data._notFound) {
+    block.innerHTML = `
+      <span class="hltb-no-data" title="Данные о времени прохождения недоступны">
+        ${icons.clock} Нет данных HLTB
+      </span>`;
+    return;
+  }
+
+  // All time values are zero/null
+  if (!data.mainStory && !data.mainExtra && !data.completionist) {
+    block.innerHTML = `
+      <span class="hltb-no-data">${icons.clock} Время не определено</span>`;
+    return;
+  }
+
+  const fmt = (h) => h ? `${h}ч` : '—';
+
+  block.innerHTML = `
+    <div class="hltb-row">
+      <span class="hltb-item" title="Основной сюжет">
+        ${icons.target} <span class="hltb-val">${fmt(data.mainStory)}</span>
+      </span>
+      <span class="hltb-sep">·</span>
+      <span class="hltb-item" title="Сюжет + побочки">
+        ${icons.box} <span class="hltb-val">${fmt(data.mainExtra)}</span>
+      </span>
+      <span class="hltb-sep">·</span>
+      <span class="hltb-item" title="100% платина">
+        ${icons.trophy} <span class="hltb-val">${fmt(data.completionist)}</span>
+      </span>
+    </div>`;
+}
 
 /**
  * Renders idle toggle + Play button block or Install button for library-sourced games.
@@ -80,12 +136,12 @@ async function renderGameControls(appId, isInstalled) {
 
   wrap.appendChild(idleSwitch);
 
+  const btnSlot = document.createElement('div');
+  btnSlot.className = 'detail-btn-slot';
+  wrap.appendChild(btnSlot);
+
   const renderButtons = () => {
-    // Remove existing buttons if any
-    const existingPlay = wrap.querySelector('.detail-play-btn');
-    const existingInstall = wrap.querySelector('.btn-install');
-    if (existingPlay) existingPlay.remove();
-    if (existingInstall) existingInstall.remove();
+    btnSlot.innerHTML = '';
 
     if (isInstalled) {
       // Play button
@@ -99,7 +155,7 @@ async function renderGameControls(appId, isInstalled) {
         window.location.href = `steam://run/${appId}`;
         store.set('runningAppId', appId);
       });
-      wrap.appendChild(playBtn);
+      btnSlot.appendChild(playBtn);
     } else {
       // Install button
       const installBtn = document.createElement('button');
@@ -108,7 +164,7 @@ async function renderGameControls(appId, isInstalled) {
       installBtn.addEventListener('click', () => {
         window.open(`steam://install/${appId}`, '_self');
       });
-      wrap.appendChild(installBtn);
+      btnSlot.appendChild(installBtn);
     }
   };
 
@@ -379,26 +435,23 @@ async function loadBadgeSection(appId) {
 
 /**
  * Verifies if the game is actually in the user's library.
+ * Returns the game object if owned, otherwise null.
  */
 async function checkIsOwnedGame(appId) {
   try {
     const ownedGamesRaw = await steamApi.getOwnedGames();
-    console.log('[GameDetail] ownedGamesRaw:', JSON.stringify(ownedGamesRaw)?.slice(0, 200));
-
     const ownedGames = Array.isArray(ownedGamesRaw) 
       ? ownedGamesRaw 
       : (ownedGamesRaw?.response?.games ?? ownedGamesRaw?.games ?? []);
 
-    console.log('[GameDetail] getOwnedGames count:', ownedGames?.length);
     if (Array.isArray(ownedGames)) {
-      const isOwned = ownedGames.some(game => String(game.appid) === String(appId));
-      console.log(`[GameDetail] appId ${appId} match:`, isOwned);
-      return isOwned;
+      const ownedGame = ownedGames.find(game => String(game.appid) === String(appId));
+      return ownedGame || null;
     }
   } catch (e) {
     console.error('[GameDetail] getOwnedGames failed:', e);
   }
-  return false;
+  return null;
 }
 
 export async function renderGameDetail(appId) {
@@ -688,7 +741,7 @@ export async function renderGameDetail(appId) {
           
           <div class="detail-side-col">
             <h1 class="side-title">${details.name}</h1>
-            <div class="info-card">
+            <div class="info-card" id="detail-info-card">
                <div class="info-row">
                  <span class="info-label">Дата выхода</span>
                  <span class="info-value">${releaseDateFull}</span>
@@ -707,6 +760,7 @@ export async function renderGameDetail(appId) {
                 </div>
              </div>
              <div id="price-regions-container"></div>
+             <div id="price-widget-container"></div>
              <div id="game-cards-container"></div>
            </div>
         </div>
@@ -715,6 +769,12 @@ export async function renderGameDetail(appId) {
       // Render regional prices
       if (details?.price_overview || details?.is_free) {
         renderPriceRegions(appId, details, container.querySelector('#price-regions-container'));
+      }
+
+      // Render ITAD + GG.deals price comparison widget
+      const priceWidgetSlot = container.querySelector('#price-widget-container');
+      if (priceWidgetSlot) {
+        renderPriceWidget(priceWidgetSlot, appId);
       }
 
       // Render collectible trading cards block
@@ -1089,9 +1149,34 @@ export async function renderGameDetail(appId) {
   if (isFromLibrary) {
     setTimeout(async () => {
       const slot = container.querySelector('#detail-game-controls');
-      if (slot) {
-        const isOwned = await checkIsOwnedGame(appId);
-        if (isOwned) {
+      const ownedGame = await checkIsOwnedGame(appId);
+      
+      if (ownedGame) {
+        // Render Playtime in sidebar
+        const infoCard = container.querySelector('#detail-info-card');
+        if (infoCard) {
+          const playtimeForever = ownedGame.playtime_forever || 0;
+          const playtime2Weeks = ownedGame.playtime_2weeks || 0;
+          
+          const totalHrs = Math.floor(playtimeForever / 60);
+          const totalStr = totalHrs >= 1000 ? `${(totalHrs/1000).toFixed(1)}k ч` : `${totalHrs} ч`;
+          
+          let playtimeHtml = `<span class="info-value">${totalStr} всего</span>`;
+          if (playtime2Weeks > 0) {
+            const weeksHrs = (playtime2Weeks / 60).toFixed(1);
+            playtimeHtml += `<span class="info-value">${weeksHrs} ч за последние 2 нед.</span>`;
+          }
+
+          const playtimeRow = document.createElement('div');
+          playtimeRow.className = 'info-row playtime-row';
+          playtimeRow.innerHTML = `
+            <span class="info-label">Время в игре</span>
+            <div class="info-value-group">${playtimeHtml}</div>
+          `;
+          infoCard.appendChild(playtimeRow);
+        }
+
+        if (slot) {
           let isInstalled = false;
           // Check installation status through IPC
           if (window.electronAuth && window.electronAuth.steamIsInstalled) {
@@ -1099,9 +1184,11 @@ export async function renderGameDetail(appId) {
           }
           const controls = await renderGameControls(appId, isInstalled);
           slot.replaceWith(controls);
-        } else {
-          slot.remove();
+          // HLTB: append play time estimates below the controls block
+          renderHLTBBlock(controls, appId, currentDetails?.name);
         }
+      } else if (slot) {
+        slot.remove();
       }
     }, 0);
   }
@@ -1232,6 +1319,15 @@ export async function renderGameDetail(appId) {
       color: #111;
       border-color: #f5f5f5;
     }
+    
+    .game-detail-controls .detail-btn-slot {
+      flex: 1;
+      display: flex;
+      justify-content: flex-end;
+    }
+    .game-detail-controls .detail-btn-slot > button {
+      width: 100%;
+    }
 
     .game-detail-controls .btn-install {
       padding: 5px 12px; 
@@ -1250,6 +1346,46 @@ export async function renderGameDetail(appId) {
     }
     .game-detail-controls .btn-install:active {
       transform: scale(0.96);
+    }
+
+    /* HLTB: How Long To Beat */
+    .hltb-block {
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .hltb-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      opacity: 0.9;
+    }
+    .hltb-label {
+      color: var(--text-muted, #aaa);
+    }
+    .hltb-val {
+      font-weight: 600;
+      color: var(--accent, #4fc3f7);
+      margin-right: 8px;
+    }
+    .hltb-loading {
+      font-size: 11px;
+      color: var(--text-muted, #aaa);
+    }
+    .hltb-no-data {
+      font-size: 11px;
+      color: var(--text-muted, #666);
+      opacity: 0.6;
+      font-style: italic;
+    }
+    .hltb-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .hltb-sep {
+      color: var(--text-muted, #555);
+      margin: 0 2px;
     }
 
     /* Game Nav Bar */
@@ -1768,6 +1904,20 @@ export async function renderGameDetail(appId) {
       color: #ddd;
       text-align: right;
     }
+    .info-value-group {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 2px;
+    }
+    .info-value-sep {
+      color: #555;
+      margin: 0 4px;
+      font-size: 11px;
+    }
+    .playtime-row .info-value {
+      font-size: 13px;
+    }
     
     /* Lightbox Styles */
     .lightbox-overlay {
@@ -2080,7 +2230,9 @@ async function renderPriceRegions(appId, details, parentContainer) {
     if (cached) return cached;
     
     try {
-      const res = await fetch('/api/rates/v6/latest/USD');
+      const isPackaged = window.location.protocol === 'file:';
+      const url = isPackaged ? 'https://open.er-api.com/v6/latest/USD' : '/api/rates/v6/latest/USD';
+      const res = await fetch(url);
       const data = await res.json();
       if (data && data.rates) {
         cache.set('usd_rates', data.rates, CACHE_TTL.RATES);
@@ -2103,11 +2255,22 @@ async function renderPriceRegions(appId, details, parentContainer) {
     const regionUSD = (regionPriceData.final / 100) / (rates[regionPriceData.currency] || 1);
 
     const diff = ((regionUSD - userUSD) / userUSD) * 100;
-    const sign = diff > 0 ? '+' : '';
     const percentage = Math.round(diff);
     
+    const arrowUp = `<svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:middle; margin-right:2px; margin-bottom:1px;"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>`;
+    const arrowDown = `<svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:middle; margin-right:2px; margin-bottom:1px;"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>`;
+
+    let text = '';
+    if (percentage > 0) {
+      text = `${arrowUp} дороже на ${percentage}%`;
+    } else if (percentage < 0) {
+      text = `${arrowDown} дешевле на ${Math.abs(percentage)}%`;
+    } else {
+      text = `0%`;
+    }
+    
     const colorClass = percentage < 0 ? 'diff-negative' : (percentage > 0 ? 'diff-positive' : 'diff-neutral');
-    return { text: `${sign}${percentage}%`, colorClass };
+    return { text, colorClass };
   };
   
   // Storage logic

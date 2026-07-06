@@ -11,13 +11,15 @@ files:
 extraResources:
   - from: resources
     to: .
+  - from: .env
+    to: .env
 
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   runAfterFinish: true
-  # installerIcon: assets/icon.ico      # ← раскомментировать когда assets/icon.ico будет создан
-  # uninstallerIcon: assets/icon.ico
+  # installerIcon: resources/icon.png
+  # uninstallerIcon: resources/icon.png
   shortcutName: SteamMini
   createDesktopShortcut: true
   createStartMenuShortcut: true
@@ -26,7 +28,7 @@ win:
   target:
     - target: nsis
       arch: [x64]
-  # icon: assets/icon.ico               # ← раскомментировать когда assets/icon.ico будет создан
+  icon: resources/icon.png
 
 publish:
   provider: github

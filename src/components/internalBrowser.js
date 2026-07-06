@@ -1,4 +1,5 @@
 import store from '../store/index.js';
+import { icons } from '../utils/icons.js';
 
 /**
  * Internal Browser Overlay
@@ -48,7 +49,7 @@ export function initInternalBrowser() {
           outline: none;
         " />
       </div>
-      <button id="ib-open-external" title="Открыть в браузере" style="${btnStyle()}">🔗</button>
+      <button id="ib-open-external" title="Открыть в браузере" style="${btnStyle()} display:flex;">${icons.link}</button>
       <button id="ib-close" title="Закрыть" style="${btnStyle('danger')}">✕</button>
     </div>
     <div id="ib-placeholder" style="
@@ -68,7 +69,7 @@ export function initInternalBrowser() {
         margin-bottom: 24px;
         opacity: 0.15;
         filter: grayscale(1);
-      ">🌐</div>
+      " style="display:flex;">${icons.globe}</div>
       <h2 style="margin: 0 0 8px 0; color: var(--color-text-primary); font-size: 1.2rem; font-weight: 600;">Браузер в режиме ожидания</h2>
       <p style="margin: 0; font-size: 0.9rem; opacity: 0.6;">Закройте профиль или настройки, чтобы вернуться к просмотру</p>
       <div style="
@@ -80,9 +81,7 @@ export function initInternalBrowser() {
     </div>
     <webview
       id="ib-webview"
-      src="about:blank"
-      partition="persist:steam"
-      style="flex: 1; width: 100%; border: none;"
+      style="flex: 1; width: 100%; border: none; display: none;"
       allowpopups
     ></webview>
   `;
@@ -139,6 +138,27 @@ export function initInternalBrowser() {
 
   // ── Webview Lifecycle & Events ────────────────────────────────────
   function attachWebviewEvents(webview) {
+    webview.addEventListener('dom-ready', () => {
+      // Force all target="_blank" links to open in the same tab instead 
+      // of throwing popups or ERR_ABORTED.
+      webview.executeJavaScript(`
+        document.body.addEventListener('click', e => {
+          const a = e.target.closest('a');
+          if (a && a.target === '_blank') {
+             a.target = '_self';
+          }
+        });
+      `);
+    });
+
+    webview.addEventListener('new-window', (e) => {
+      // Force all popups (e.g. target="_blank" from GG.deals keyshops)
+      // to open in the same internal browser tab.
+      if (e.url) {
+        webview.src = e.url;
+      }
+    });
+
     webview.addEventListener('did-navigate', (e) => {
       const url = e.url;
       if (url === 'about:blank') return;
@@ -154,6 +174,13 @@ export function initInternalBrowser() {
       currentUrl = url;
       urlInput.value = url;
       updateNavButtons();
+
+      if (window._browserOpenedForEgsLogin) {
+        const isStorePage = url.includes('epicgames.com/store') || url.includes('epicgames.com/en-US');
+        if (isStorePage) {
+          close();
+        }
+      }
     });
     webview.addEventListener('did-navigate-in-page', (e) => {
       const url = e.url;
@@ -191,7 +218,11 @@ export function initInternalBrowser() {
   store.subscribe('isBrowserOpen', (isOpen) => {
     overlay.style.display = isOpen ? 'flex' : 'none';
     if (!isOpen) {
-      if (wv) wv.src = 'about:blank';
+      // Останавливаем загрузку без навигации на about:blank
+      try {
+        if (wv && typeof wv.stop === 'function') wv.stop();
+      } catch (_) {}
+      if (wv) wv.style.display = 'none';
       historyStack = [];
       historyIndex = -1;
       currentUrl = '';
@@ -216,7 +247,7 @@ export function initInternalBrowser() {
   function ensureCorrectPartition(url, forcedPartition = null) {
     const isEpi = url.includes('epicgames.com');
     // If forcedPartition is 'default', we want no partition attribute to use default session
-    const targetPartition = forcedPartition === 'default' ? '' : (forcedPartition || (isEpi ? 'persist:egs' : 'persist:steam'));
+    const targetPartition = forcedPartition === 'default' ? '' : (forcedPartition || (isEpi ? 'persist:egs' : ''));
     const currentPartition = wv.getAttribute('partition') || '';
 
     if (currentPartition !== targetPartition) {
@@ -225,7 +256,7 @@ export function initInternalBrowser() {
       if (targetPartition) {
         newWv.setAttribute('partition', targetPartition);
       }
-      newWv.style.cssText = 'flex: 1; width: 100%; border: none;';
+      newWv.style.cssText = 'flex: 1; width: 100%; border: none; display: none;';
       newWv.setAttribute('allowpopups', '');
       
       wv.replaceWith(newWv);
@@ -254,6 +285,7 @@ export function initInternalBrowser() {
     // 2. Load URL in next tick to avoid black screen / initialization issues
     setTimeout(() => {
         if (wv) {
+            wv.style.display = '';
             wv.src = url;
             updateNavButtons();
         }
@@ -262,6 +294,12 @@ export function initInternalBrowser() {
 
   function close() {
     store.set('isBrowserOpen', false);
+    if (window._browserOpenedForEgsLogin) {
+      window._browserOpenedForEgsLogin = false;
+      if (typeof window.checkEgsBadge === 'function') {
+        window.checkEgsBadge();
+      }
+    }
   }
 
   // ── Navigation ────────────────────────────────────────────────────

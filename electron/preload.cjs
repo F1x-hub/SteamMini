@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAuth', {
    * @returns {Promise<{steamId: string, webApiToken: string, mode: string}>}
    */
   steamDirectLogin: () => ipcRenderer.invoke('auth:steam-direct'),
+  silentRefreshToken: () => ipcRenderer.invoke('auth:silent-refresh-token'),
 
   /**
    * Listen for auth result events from main process
@@ -70,6 +71,11 @@ contextBridge.exposeInMainWorld('electronAuth', {
   settingsGet: () => ipcRenderer.invoke('settings:get'),
   settingsSave: (settings) => ipcRenderer.invoke('settings:save', settings),
 
+  farmStartPlaytimeRefresh: () => ipcRenderer.invoke('farm:start-playtime-refresh'),
+  farmStopPlaytimeRefresh: () => ipcRenderer.invoke('farm:stop-playtime-refresh'),
+  onFarmRefreshPlaytime: (callback) => ipcRenderer.on('farm:refresh-playtime', () => callback()),
+  onFarmingUpdate: (callback) => ipcRenderer.on('farming:update', (_, data) => callback(data)),
+
   // Inventory
   inventoryGetCards: (steamId, forceRefresh) => ipcRenderer.invoke('inventory:get-cards', steamId, forceRefresh),
   openExternal: (url) => ipcRenderer.send('open-external', url),
@@ -79,6 +85,7 @@ contextBridge.exposeInMainWorld('electronAuth', {
   freeGamesGetSettings:  ()         => ipcRenderer.invoke('free-games:get-settings'),
   freeGamesSaveSettings: (settings) => ipcRenderer.invoke('free-games:save-settings', settings),
   steamClaimFreeGame:   (params) => ipcRenderer.invoke('steam:claim-free-game', params),
+  onFreeGamesRefreshNeeded: (cb) => ipcRenderer.on('free-games:refresh-needed', () => cb()),
 
   egsLogin:         () => ipcRenderer.invoke('egs:login'),
   egsCheckSession:  () => ipcRenderer.invoke('egs:check-session'),
@@ -99,6 +106,7 @@ contextBridge.exposeInMainWorld('electronAuth', {
   onCancelProgress:     (cb)     => ipcRenderer.on('market:cancel-progress',
                                     (_, data) => cb(data)),
   removeCancelProgress: ()       => ipcRenderer.removeAllListeners('market:cancel-progress'),
+  prefetchPrices:       (names)  => ipcRenderer.invoke('market:prefetch-prices', names),
 
   // Key Activation
   steamRedeemKey: (params) => ipcRenderer.invoke('steam:redeem-key', params),
@@ -109,6 +117,11 @@ contextBridge.exposeInMainWorld('electronAuth', {
   updateDownload: () => ipcRenderer.invoke('update:download'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  setAutoDownload: (enabled) => ipcRenderer.invoke('update:set-auto-download', enabled),
+  onUpdateAvailable:   (cb) => ipcRenderer.on('update:notify-available',  (_, info) => cb(info)),
+  onUpdateDownloading: (cb) => ipcRenderer.on('update:downloading',        ()        => cb()),
+  onUpdateDownloaded:  (cb) => ipcRenderer.on('update:notify-downloaded',  (_, info) => cb(info)),
+  onUpdateProgress:    (cb) => ipcRenderer.on('update:progress',           (_, p)    => cb(p)),
   
   // App
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
@@ -125,4 +138,20 @@ contextBridge.exposeInMainWorld('electronAuth', {
   clearSessions: () => ipcRenderer.invoke('auth:clear-sessions'),
 
   showInputContextMenu: () => ipcRenderer.send('show-input-context-menu'),
+
+  // Bug Report
+  sendReport: () => ipcRenderer.invoke('report:send'),
+  log: (level, ...args) => ipcRenderer.send('logger:add', { level, args }),
+
+  // HLTB: How Long To Beat
+  getHLTBTime: (appId, name) => ipcRenderer.invoke('hltb:getTime', appId, name),
+  hltbGetBatch: (games) => ipcRenderer.invoke('hltb:getBatch', games),
+
+  // Backlog Cache
+  backlogGetCache: () => ipcRenderer.invoke('backlog:getCache'),
+  backlogSetCache: (games) => ipcRenderer.invoke('backlog:setCache', games),
+
+  // Backup and Restore
+  backupExport: (steamId) => ipcRenderer.invoke('backup:export', steamId),
+  backupImport: (steamId) => ipcRenderer.invoke('backup:import', steamId),
 });

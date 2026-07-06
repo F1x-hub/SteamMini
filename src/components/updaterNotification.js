@@ -1,4 +1,9 @@
+let _initialized = false;
+
 export function initUpdaterNotification() {
+  if (_initialized) return;
+  _initialized = true;
+
   if (!window.electronAuth) return;
 
   const container = document.createElement('div');
@@ -26,126 +31,7 @@ export function initUpdaterNotification() {
     </div>
   `;
 
-  const style = document.createElement('style');
-  style.textContent = `
-    .updater-notification-container {
-      position: fixed;
-      top: 50px;
-      right: 24px;
-      z-index: 99999;
-      display: none;
-    }
-    .updater-box {
-      background: var(--color-bg-surface);
-      border: 1px solid var(--color-border);
-      border-radius: var(--radius-md);
-      width: 320px;
-      box-shadow: var(--shadow-lg);
-      display: flex;
-      flex-direction: column;
-      animation: slideInFromRight 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-    }
-    @keyframes slideInFromRight {
-      from { transform: translateX(100%); opacity: 0; }
-      to { transform: translateX(0); opacity: 1; }
-    }
-    .updater-header {
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--color-border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: rgba(255, 255, 255, 0.02);
-    }
-    .updater-header h3 {
-      margin: 0;
-      font-size: 0.95rem;
-      font-weight: 600;
-      color: var(--color-text-primary);
-    }
-    .updater-close {
-      background: none;
-      border: none;
-      font-size: 1.2rem;
-      color: var(--color-text-secondary);
-      cursor: pointer;
-      line-height: 1;
-    }
-    .updater-close:hover {
-      color: var(--color-action-primary);
-    }
-    .updater-body {
-      padding: 16px;
-    }
-    .updater-body p {
-      margin: 0 0 12px 0;
-      font-size: 0.85rem;
-      color: var(--color-text-secondary);
-    }
-    .updater-progress {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .progress-bar-bg {
-      width: 100%;
-      height: 6px;
-      background: var(--color-bg-base);
-      border-radius: 3px;
-      overflow: hidden;
-      border: 1px solid var(--color-border);
-    }
-    .progress-bar-fill {
-      height: 100%;
-      background: var(--color-action-primary);
-      width: 0%;
-      transition: width 0.2s linear;
-    }
-    .progress-text {
-      font-size: 0.75rem;
-      color: var(--color-text-secondary);
-      text-align: right;
-    }
-    .updater-footer {
-      padding: 12px 16px;
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      border-top: 1px solid var(--color-border);
-      background: rgba(255,255,255,0.01);
-    }
-    .btn-secondary {
-      background: transparent;
-      color: var(--color-text-secondary);
-      border: 1px solid var(--color-border);
-      padding: 6px 12px;
-      border-radius: var(--radius-sm);
-      font-size: 0.85rem;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    .btn-secondary:hover {
-      background: var(--color-bg-surface-light);
-      color: var(--color-text-primary);
-    }
-    .updater-footer .btn-primary {
-      background: var(--color-action-primary);
-      color: var(--color-bg-base);
-      border: none;
-      padding: 6px 12px;
-      border-radius: var(--radius-sm);
-      font-size: 0.85rem;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    .updater-footer .btn-primary:hover {
-      background: var(--color-action-hover);
-    }
-  `;
-  
-  container.appendChild(style);
+
   document.body.appendChild(container);
 
   const titleEl = container.querySelector('#updater-title');

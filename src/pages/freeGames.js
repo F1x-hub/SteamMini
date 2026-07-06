@@ -1,187 +1,98 @@
 /**
  * Free Games page — shows free game giveaways from Epic Games Store and GamerPower
  */
+import { icons } from '../utils/icons.js';
 import toast from '../utils/toast.js';
-
-export async function renderFreeGames() {
+import { cacheGet, cacheSet, TTL } from '../cache/pageCache.js';
+import { showSkeleton, hideSkeleton } from '../utils/skeleton.js';
+export function renderFreeGames() {
   const container = document.createElement('div');
   container.className = 'page-container free-games-page';
+  // No setTimeout - render and load immediately
 
-  const style = document.createElement('style');
-  style.textContent = `
-    .free-games-page {
-      padding: var(--spacing-lg) var(--spacing-xl);
-      max-width: 1200px;
-      margin: 0 auto;
-    }
-    .free-games-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 20px;
-    }
-    .free-games-header h2 {
-      color: var(--color-text-primary);
-      font-size: 20px;
-      font-weight: 600;
-      margin: 0;
-    }
-    .free-games-refresh-btn {
-      padding: 7px 14px;
-      border-radius: 8px;
-      cursor: pointer;
-      border: 1px solid var(--color-border);
-      background: var(--color-bg-surface);
-      color: var(--color-text-secondary);
-      font-size: 12px;
-      transition: border-color 0.2s, color 0.2s;
-    }
-    .free-games-refresh-btn:hover {
-      border-color: var(--color-text-secondary);
-      color: var(--color-text-primary);
-    }
-    .free-games-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: 16px;
-    }
-    .free-game-card {
-      background: var(--color-bg-surface);
-      border: 1px solid var(--color-border);
-      border-radius: 12px;
-      overflow: hidden;
-      cursor: pointer;
-      transition: border-color 0.2s, transform 0.15s;
-    }
-    .free-game-card:hover {
-      border-color: var(--color-accent-green);
-      transform: translateY(-2px);
-      box-shadow: var(--shadow-hover);
-    }
-    .free-game-card-img {
-      width: 100%;
-      height: 160px;
-      overflow: hidden;
-    }
-    .free-game-card-img img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-    .free-game-card-placeholder {
-      width: 100%;
-      height: 160px;
-      background: var(--color-bg-base);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 40px;
-    }
-    .free-game-card-body {
-      padding: 14px;
-    }
-    .free-game-card-meta {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
-    }
-    .free-game-platform {
-      font-size: 11px;
-      color: var(--color-text-secondary);
-      background: var(--color-bg-base);
-      padding: 3px 8px;
-      border-radius: 4px;
-      border: 1px solid var(--color-border);
-    }
-    .free-game-badge {
-      font-size: 11px;
-      color: var(--color-accent-green);
-      font-weight: 700;
-      background: rgba(34, 197, 94, 0.15);
-      padding: 3px 8px;
-      border-radius: var(--radius-sm);
-    }
-    .free-game-title {
-      color: var(--color-text-primary);
-      font-weight: 600;
-      font-size: 14px;
-      margin-bottom: 6px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .free-game-original-price {
-      color: var(--color-text-secondary);
-      font-size: 12px;
-      text-decoration: line-through;
-      margin-bottom: 4px;
-    }
-    .free-game-end-date {
-      color: var(--color-warning);
-      font-size: 11px;
-    }
-    .free-games-loading,
-    .free-games-error,
-    .free-games-empty {
-      grid-column: 1 / -1;
-      text-align: center;
-      padding: 40px;
-      font-size: 14px;
-    }
-    .free-games-loading { color: var(--color-text-secondary); }
-    .free-games-error   { color: var(--color-danger); }
-    .free-games-empty   { color: var(--color-text-secondary); }
-  `;
-  container.appendChild(style);
-
+  // Initial DOM layout
   container.innerHTML += `
     <div class="free-games-header">
-      <h2>🎁 Бесплатные игры</h2>
       <div style="display:flex;align-items:center;gap:10px;">
-        <button class="free-games-refresh-btn" onclick="renderFreeGamesSettings()">⚙ Настройки</button>
+        <div id="egs-auth-badge" style="display:none; align-items:center; gap:6px; font-size:12px; font-weight:600; padding:6px 12px; border-radius:6px; transition: all 0.2s;"></div>
+        <button class="free-games-refresh-btn" style="display:inline-flex;align-items:center;gap:4px;" onclick="renderFreeGamesSettings()">${icons.settings} Настройки</button>
         <button class="free-games-refresh-btn" id="free-games-refresh">Обновить</button>
       </div>
     </div>
-    <div class="free-games-grid" id="free-games-grid">
-      <div class="free-games-loading">Загружаю...</div>
-    </div>
+    <div class="free-games-grid" id="free-games-grid"></div>
   `;
 
-  async function loadGames() {
-    const grid = container.querySelector('#free-games-grid');
+  const grid = container.querySelector('#free-games-grid');
+  showSkeleton(grid, 8);
+  loadGames(container);
+
+  async function checkEgsBadge() {
+    const badge = container.querySelector('#egs-auth-badge');
+    if (!badge) return;
+
+    if (window._currentSettingsCache?.platforms?.epic && window._currentSettingsCache?.autoClaim?.egsEnabled) {
+      badge.style.display = 'inline-flex';
+      badge.innerHTML = 'Загрузка...';
+      badge.style.background = 'var(--color-bg-base)';
+      badge.style.color = 'var(--color-text-secondary)';
+      badge.style.border = '1px solid var(--color-border)';
+      badge.style.cursor = 'default';
+      badge.onclick = null;
+
+      const hasSession = await window.electronAuth.egsCheckSession();
+      if (hasSession) {
+        badge.innerHTML = `${icons.check} EGS: Авторизован`;
+        badge.style.background = '#0d2b1a';
+        badge.style.color = '#22c55e';
+        badge.style.border = '1px solid #22c55e33';
+      } else {
+        badge.innerHTML = `${icons.warning} EGS: Войти →`;
+        badge.style.background = '#2b210d';
+        badge.style.color = '#f59e0b';
+        badge.style.border = '1px solid #f59e0b33';
+        badge.style.cursor = 'pointer';
+        badge.onclick = async () => {
+          badge.innerHTML = 'Ожидание...';
+          try {
+            const res = await window.electronAuth.egsDirectLogin();
+            if (res && res.success) {
+              checkEgsBadge();
+            }
+          } catch (e) {
+            console.error('[EGS Login]', e);
+            checkEgsBadge();
+          }
+        };
+      }
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+  
+  window.checkEgsBadge = checkEgsBadge;
+
+  async function loadGames(pageContainer = container) {
+    const grid = pageContainer.querySelector('#free-games-grid');
     if (!grid) return;
 
-    grid.innerHTML = `<div class="free-games-loading">Загружаю...</div>`;
+    const cacheKey = 'freeGames:list';
+    const cachedResult = cacheGet(cacheKey, TTL.FREE_GAMES);
 
-    const settings = await window.electronAuth.freeGamesGetSettings();
-    window._currentSettingsCache = settings; // Store globally for render access
-
-    const result = await window.electronAuth.freeGamesGet();
-
-    if (result.error) {
-      grid.innerHTML = `<div class="free-games-error">Ошибка: ${result.error}</div>`;
-      return;
-    }
-
-    if (!result.games?.length) {
-      grid.innerHTML = `<div class="free-games-empty">Бесплатных игр не найдено</div>`;
-      return;
-    }
-
-    grid.innerHTML = result.games.map(g => `
+    const renderList = (games) => {
+      hideSkeleton(grid);
+      grid.innerHTML = games.map(g => `
       <div class="free-game-card" data-url="${g.url}">
         ${g.imageUrl ? `
           <div class="free-game-card-img">
             <img src="${g.imageUrl}" alt="${g.title}"
-                 onerror="this.parentElement.outerHTML='<div class=\\'free-game-card-placeholder\\'>🎮</div>'">
+                 onerror="this.parentElement.outerHTML='<div class=\\'free-game-card-placeholder\\'>${icons.game.replace(/\"/g, '&quot;')}</div>'">
           </div>
         ` : `
-          <div class="free-game-card-placeholder">🎮</div>
+          <div class="free-game-card-placeholder">${icons.game}</div>
         `}
         <div class="free-game-card-body">
           <div class="free-game-card-meta">
-            <span class="free-game-platform">${g.platform}</span>
+            <span class="free-game-platform" title="${g.platform}">${g.platform}</span>
             <span class="free-game-badge">БЕСПЛАТНО</span>
           </div>
           <div class="free-game-title" title="${g.title}">${g.title}</div>
@@ -189,7 +100,7 @@ export async function renderFreeGames() {
             <div class="free-game-original-price">${g.originalPrice}</div>
           ` : ''}
           ${g.endDate ? `
-            <div class="free-game-end-date">⏱ До ${g.endDate}</div>
+            <div class="free-game-end-date">${icons.clock} До ${g.endDate}</div>
           ` : ''}
 
           <!-- Кнопка забрать / статус авто-клейма -->
@@ -200,7 +111,7 @@ export async function renderFreeGames() {
               border:1px solid rgba(22, 83, 43, 0.8);background:rgba(34, 197, 94, 0.05);
               color:var(--color-accent-green);font-size:13px;font-weight:600;
             ">
-              ✅ В библиотеке
+              ${icons.check} <span>В библиотеке</span>
             </div>
           ` : (g.canAutoClaim || g.platform?.toLowerCase().includes('epic')) ? (
             (window._currentSettingsCache?.autoClaim?.enabled && (g.steamAppId || (g.platform?.toLowerCase().includes('epic') && window._currentSettingsCache?.autoClaim?.egsEnabled))) ? `
@@ -210,7 +121,7 @@ export async function renderFreeGames() {
               border:1px solid rgba(22, 83, 43, 0.8);background:rgba(34, 197, 94, 0.05);
               color:var(--color-accent-green);font-size:12px;
             ">
-              ⚡ Авто-получение включено
+              ${icons.lightning} Авто-получение включено
             </div>
             ` : `
             <button
@@ -227,7 +138,7 @@ export async function renderFreeGames() {
               onmouseover="this.style.background='var(--color-accent-green)';this.style.color='var(--color-bg-base)';"
               onmouseout="this.style.background='rgba(22, 83, 43, 0.8)';this.style.color='var(--color-accent-green)';"
             >
-              ⚡ Забрать бесплатно
+              ${icons.lightning} Забрать бесплатно
             </button>
             `
           ) : `
@@ -241,12 +152,48 @@ export async function renderFreeGames() {
             onmouseover="this.style.background='var(--color-bg-hover)';this.style.color='var(--color-text-primary)';"
             onmouseout="this.style.background='var(--color-bg-surface)';this.style.color='var(--color-text-secondary)';"
             onclick="window.electronAuth.openExternal('${g.url}');return false;">
-              🔗 Открыть страницу
+              ${icons.link} Открыть страницу
             </a>
           `}
         </div>
       </div>
     `).join('');
+    };
+
+    if (cachedResult && cachedResult.games) {
+      renderList(cachedResult.games);
+    }
+    // If no cache, we already have skeletons in HTML
+
+    const settings = await window.electronAuth.freeGamesGetSettings();
+    window._currentSettingsCache = settings; // Store globally for render access
+    checkEgsBadge(); // Update badge status based on settings
+
+    if (cachedResult && cachedResult.games) {
+      window.electronAuth.freeGamesGet().then(result => {
+        if (!result.error && result.games) {
+          cacheSet(cacheKey, result);
+          renderList(result.games);
+        }
+      }).catch(err => console.error('[FreeGames BG]', err));
+    } else {
+      const result = await window.electronAuth.freeGamesGet();
+
+      hideSkeleton(grid);
+
+      if (result.error) {
+        grid.innerHTML = `<div class="free-games-error">Ошибка: ${result.error}</div>`;
+        return;
+      }
+
+      if (!result.games?.length) {
+        grid.innerHTML = `<div class="free-games-empty">Бесплатных игр не найдено</div>`;
+        return;
+      }
+
+      cacheSet(cacheKey, result);
+      renderList(result.games);
+    }
 
     // Bind click → open in browser
     grid.addEventListener('click', (e) => {
@@ -260,22 +207,24 @@ export async function renderFreeGames() {
     });
   }
 
-  // Initial load
-  loadGames();
+  // Initial load is now handled via setTimeout at the start of renderFreeGames
 
   // Refresh button
-  setTimeout(() => {
-    const refreshBtn = container.querySelector('#free-games-refresh');
-    if (refreshBtn) {
-      refreshBtn.addEventListener('click', () => loadGames());
-    }
-  }, 0);
+  const refreshBtn = container.querySelector('#free-games-refresh');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => {
+      const grid = container.querySelector('#free-games-grid');
+      if (grid) showSkeleton(grid, 8);
+      loadGames(container);
+    });
+  }
 
-  // Expose loadGames to window for programmatic refresh (e.g., from settings modal)
   window.refreshFreeGames = loadGames;
 
   return container;
 }
+
+
 
 // ──────────────── Settings UI ────────────────
 
@@ -302,7 +251,7 @@ async function renderFreeGamesSettings() {
       <div style="display:flex;align-items:center;justify-content:space-between;
                   margin-bottom:24px;">
         <div style="font-size:17px;font-weight:700;color:var(--color-text-primary);">
-          ⚙ Настройки раздач
+          ${icons.settings} Настройки раздач
         </div>
         <button onclick="closeFreeGamesSettings()" style="
           background:none;border:none;color:var(--color-text-secondary);
@@ -319,11 +268,11 @@ async function renderFreeGamesSettings() {
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;">
           ${[
-            { key: 'epic',   label: 'Epic Games Store', icon: '🟣' },
-            { key: 'steam',  label: 'Steam',            icon: '🔵' },
-            { key: 'gog',    label: 'GOG',              icon: '🟤' },
-            { key: 'itchio', label: 'itch.io',          icon: '🔴' },
-            { key: 'other',  label: 'Другие платформы', icon: '⚪' },
+            { key: 'epic',   label: 'Epic Games Store', icon: '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#8A2BE2;margin-right:6px;"></span>' },
+            { key: 'steam',  label: 'Steam',            icon: '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#1E90FF;margin-right:6px;"></span>' },
+            { key: 'gog',    label: 'GOG',              icon: '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#8B4513;margin-right:6px;"></span>' },
+            { key: 'itchio', label: 'itch.io',          icon: '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#FF4500;margin-right:6px;"></span>' },
+            { key: 'other',  label: 'Другие платформы', icon: '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#FFFFFF;margin-right:6px;"></span>' },
           ].map(p => `
             <label style="
               display:flex;align-items:center;justify-content:space-between;
@@ -372,7 +321,7 @@ async function renderFreeGamesSettings() {
           ">
             <div>
               <div style="color:var(--color-text-primary);font-size:13px;font-weight:500;">
-                ⚡ Только мгновенные раздачи
+                ${icons.lightning} Только мгновенные раздачи
               </div>
               <div style="color:var(--color-text-secondary);font-size:11px;margin-top:3px;">
                 Только игры напрямую от Steam/Epic/GOG<br>
@@ -407,7 +356,7 @@ async function renderFreeGamesSettings() {
           ">
             <div>
               <div style="color:var(--color-text-primary);font-size:13px;font-weight:500;">
-                🎮 Только игры
+                ${icons.game} Только игры
               </div>
               <div style="color:var(--color-text-secondary);font-size:11px;margin-top:3px;">
                 Исключить DLC, лут и внутриигровые предметы
@@ -452,7 +401,7 @@ async function renderFreeGamesSettings() {
           ">
             <div>
               <div style="color:var(--color-text-primary);font-size:13px;font-weight:500;">
-                🔔 Системные уведомления
+                ${icons.bell} Системные уведомления
               </div>
               <div style="color:var(--color-text-secondary);font-size:11px;margin-top:3px;">
                 Получать уведомления о новых бесплатных играх
@@ -485,7 +434,7 @@ async function renderFreeGamesSettings() {
         <div style="font-size:12px;color:var(--color-text-secondary);font-weight:600;
                     text-transform:uppercase;letter-spacing:1px;
                     margin-bottom:12px;">
-          ⚡ Авто-получение
+          ${icons.lightning} Авто-получение
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;">
 
@@ -498,7 +447,7 @@ async function renderFreeGamesSettings() {
           ">
             <div>
               <div style="color:var(--color-text-primary);font-size:13px;font-weight:600;">
-                ⚡ Автоматически забирать игры
+                ${icons.lightning} Автоматически забирать игры
               </div>
               <div style="color:var(--color-text-secondary);font-size:11px;margin-top:3px;">
                 Бесплатные игры добавляются в библиотеку автоматически
@@ -530,7 +479,7 @@ async function renderFreeGamesSettings() {
             border:1px solid #1e1e1e;background:#0a0a0a;
           ">
             <div style="color:var(--color-text-primary);font-size:13px;">
-              🔹 Только Steam (прямые)
+              <span style="display:inline-block;width:8px;height:8px;background:#1E90FF;transform:rotate(45deg);margin-right:6px;"></span> Только Steam (прямые)
             </div>
             <div
               onclick="toggleNestedFilter('autoClaim', 'steamOnly', this)"
@@ -558,7 +507,7 @@ async function renderFreeGamesSettings() {
           ">
             <div>
               <div style="color:var(--color-text-primary);font-size:13px;">
-                🔸 Epic Games Store (EGS)
+                <span style="display:inline-block;width:8px;height:8px;background:#f59e0b;transform:rotate(45deg);margin-right:6px;"></span> Epic Games Store (EGS)
               </div>
               <div style="color:var(--color-text-secondary);font-size:11px;margin-top:3px;">
                 Требуется единоразовая авторизация
@@ -590,7 +539,7 @@ async function renderFreeGamesSettings() {
             opacity:${settings.autoClaim?.enabled ? '1' : '0.4'};
           " data-autoclaim-child>
             <div style="color:var(--color-text-primary);font-size:13px;">
-              🔔 Уведомить перед получением
+              ${icons.bell} Уведомить перед получением
             </div>
             <div
               onclick="if(_pendingSettings.autoClaim?.enabled ?? ${settings.autoClaim?.enabled}) toggleNestedFilter('autoClaim','notifyBefore',this)"
@@ -621,7 +570,7 @@ async function renderFreeGamesSettings() {
             opacity:${settings.autoClaim?.enabled ? '1' : '0.4'};
           " data-autoclaim-child>
             <div style="color:var(--color-text-primary);font-size:13px;">
-              ✅ Уведомить после получения
+              ${icons.check} Уведомить после получения
             </div>
             <div
               onclick="if(_pendingSettings.autoClaim?.enabled ?? ${settings.autoClaim?.enabled}) toggleNestedFilter('autoClaim','notifyAfter',this)"
@@ -655,7 +604,7 @@ async function renderFreeGamesSettings() {
       ">
         <div style="color:var(--color-text-primary);font-size:13px;font-weight:500;
                     margin-bottom:10px;">
-          ⏱ Проверять каждые
+          ${icons.clock} Проверять каждые
         </div>
         <div style="display:flex;gap:6px;">
           ${[1, 3, 6, 12, 24].map(h => `
@@ -837,7 +786,7 @@ async function claimFreeGame(gameId, steamAppId, title, platform, url) {
 
   // Заблокировать кнопку
   btn.disabled    = true
-  btn.textContent = '⏳ Добавляю...'
+  btn.innerHTML = `${icons.loading} Добавляю...`
   btn.style.borderColor = '#f59e0b'
   btn.style.background  = '#1a1200'
   btn.style.color       = '#f59e0b'
@@ -893,3 +842,14 @@ async function claimFreeGame(gameId, steamAppId, title, platform, url) {
 
 window.claimFreeGame = claimFreeGame
 
+if (!window._freeGamesRefreshListenerAttached) {
+  window._freeGamesRefreshListenerAttached = true;
+  if (window.electronAuth && window.electronAuth.onFreeGamesRefreshNeeded) {
+    window.electronAuth.onFreeGamesRefreshNeeded(() => {
+      console.log('[FreeGames UI] Auto-claim success in background, refreshing UI...');
+      if (typeof window.refreshFreeGames === 'function') {
+        window.refreshFreeGames();
+      }
+    });
+  }
+}

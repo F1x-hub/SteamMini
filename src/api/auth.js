@@ -63,6 +63,21 @@ class AuthAPI {
     // If there's a JWT-style accessToken, check expiry
     if (credentials.accessToken && isTokenExpired(credentials.accessToken)) {
       console.warn('Access token expired for mode:', credentials.mode);
+      
+      if (credentials.mode === 'steam_direct' && window.electronAuth?.silentRefreshToken) {
+        console.warn('[authApi] Access token expired, trying silent refresh...');
+        try {
+          const result = await window.electronAuth.silentRefreshToken();
+          if (result?.success && result?.token) {
+            credentials.accessToken = result.token;
+            storage.setEncrypted('steam_credentials', credentials);
+            console.log('[authApi] Silent refresh OK — continuing as authenticated');
+            return credentials;
+          }
+        } catch (e) {
+          console.warn('[authApi] Silent refresh IPC failed:', e.message);
+        }
+      }
       return null; // User must re-authenticate
     }
 

@@ -1,4 +1,6 @@
+import { icons } from '../utils/icons.js';
 import store from '../store/index.js';
+import { cacheGet, cacheSet, cacheInvalidate, TTL } from '../cache/pageCache.js';
 
 // ── Module-level state (persists across re-renders) ──────────────────────────
 let selectMode        = false;
@@ -30,9 +32,9 @@ export async function renderCardsInventory() {
     </div>
     
     <div id="tabs-container" class="tabs-container">
-      <button id="tab-inventory" class="card-tab active">📦 Инвентарь</button>
-      <button id="tab-listings" class="card-tab">🏪 Мои лоты</button>
-      <button id="tab-history" class="card-tab">📋 История</button>
+      <button id="tab-inventory" class="card-tab active">${icons.box} Инвентарь</button>
+      <button id="tab-listings" class="card-tab">${icons.store} Мои лоты</button>
+      <button id="tab-history" class="card-tab">${icons.clipboard} История</button>
     </div>
 
     <div id="main-content-area">
@@ -41,6 +43,7 @@ export async function renderCardsInventory() {
       <div id="sell-progress-panel" style="display: none; padding: 12px 16px; background: #111; border: 1px solid #1e1e1e; border-radius: 8px; margin-bottom: 12px; font-size: 12px; color: #555;"></div>
       <div id="sell-results-panel" style="display: none; margin-bottom: 16px; padding: 16px; background: #111; border: 1px solid #1e1e1e; border-radius: 10px;"></div>
 
+      <div id="price-loading-progress" style="display: none; padding: 12px 16px; background: var(--color-bg-base); border: 1px solid var(--color-border); border-radius: 8px; margin-bottom: 12px; font-size: 13px; color: var(--color-text-secondary); align-items: center; gap: 12px;"></div>
       <div id="inventory-view">
         <div id="inventory-controls" style="margin-bottom: 12px;"></div>
         <div class="search-container" style="margin-bottom: 12px;">
@@ -77,6 +80,9 @@ export async function renderCardsInventory() {
     }
 
     .card-tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       padding: 8px 16px;
       border-radius: var(--radius-sm);
       border: none;
@@ -408,8 +414,10 @@ export async function renderCardsInventory() {
       listingSelectMode = !listingSelectMode;
       selectedListings.clear();
       if (currentListingsData) {
+        const start = listingsPage * listingsPerPage;
+        const paginated = (currentListingsData.allListings ?? []).slice(start, start + listingsPerPage);
         const tbody = document.getElementById('listings-tbody');
-        if (tbody) tbody.innerHTML = renderListingsTable(currentListingsData.listings);
+        if (tbody) tbody.innerHTML = renderListingsTable(paginated);
         renderListingsBulkBar();
       }
     } else {
@@ -428,6 +436,10 @@ export async function renderCardsInventory() {
       selected = new Set();
       const summaryEl = document.getElementById('price-summary');
       if (summaryEl) summaryEl.remove();
+      
+      const progressEl = document.getElementById('price-loading-progress');
+      if (progressEl) progressEl.style.display = 'none';
+
       updateUI();
       filterCards();
     } else {
@@ -472,7 +484,14 @@ export async function renderCardsInventory() {
 
       if (pendingConfirmation.size === 0) {
         stopConfirmationPolling();
-        loadCards(); // final reload
+        renderAwaitingConfirmationTab();
+
+        // Automatically exit select mode after everything is confirmed
+        if (selectMode) {
+          toggleSelectMode();
+        }
+
+        await loadCards(true); // final reload to sync with server and clear all caches
       }
     }, 10000);
   };
@@ -484,9 +503,96 @@ export async function renderCardsInventory() {
     }
   };
 
+  const renderAwaitingConfirmationTab = () => {
+    const tabsContainer = container.querySelector('#tabs-container');
+    if (!tabsContainer) return;
+
+    const existing = document.getElementById('tab-awaiting-confirmation');
+
+    // Если pending пуст — убираем таб
+    if (pendingConfirmation.size === 0) {
+      existing?.remove();
+      return;
+    }
+
+    // Таб уже есть — обновляем счётчик
+    if (existing) {
+      const countEl = existing.querySelector('.awaiting-confirm-count');
+      if (countEl) countEl.textContent = pendingConfirmation.size;
+      return;
+    }
+
+    const tab = document.createElement('button');
+    tab.id = 'tab-awaiting-confirmation';
+    tab.className = 'card-tab';
+    tab.style.cssText = `
+      border: 1px solid var(--color-warning);
+      color: var(--color-warning);
+    `;
+    tab.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </svg>
+      Ждут подтверждения
+      <span class="awaiting-confirm-count" style="
+        background: var(--color-warning);
+        color: #000;
+        border-radius: 99px;
+        padding: 1px 6px;
+        font-size: 10px;
+        font-weight: 700;
+        margin-left: 2px;
+      ">${pendingConfirmation.size}</span>
+    `;
+
+    tab.onclick = () => {
+      switchTab('inventory');
+      
+      // Force reconstruction of sellResults if they were cleared but items are pending
+      if (!currentSellResults && pendingConfirmation.size > 0) {
+        currentSellResults = [...pendingConfirmation].map(id => ({
+          assetId: id,
+          name: allCards.find(c => (c.assetIds || []).includes(id) || c.assetId === id)?.name || `Предмет ${id}`,
+          status: 'pending'
+        }));
+        sellResults = currentSellResults;
+        renderSellResultsTable(currentSellResults);
+      }
+
+      const resultsPanel = container.querySelector('#sell-results-panel');
+      if (resultsPanel) {
+        resultsPanel.style.display = 'block'; // Force show
+        resultsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Ensure its content is rendered
+        if (resultsPanel.innerHTML === '') {
+           updateUI(); // This will trigger the details/table rendering
+        }
+      }
+    };
+
+    tabsContainer.insertBefore(tab, tabsContainer.firstChild);
+  };
+
   const updateSellResultStatus = (assetId, status) => {
     console.log('[update] Setting status:', assetId, '->', status);
     sellResultStatuses[assetId] = status;
+
+    if (status === 'confirmed' || status === 'sold') {
+      // Remove the asset from allCards immediately so it disappears visually
+      allCards = allCards.map(c => {
+        if (c.assetIds && c.assetIds.includes(assetId)) {
+          c.assetIds = c.assetIds.filter(id => id !== assetId);
+          c.amount = c.assetIds.length;
+          return { ...c };
+        }
+        return c;
+      }).filter(c => (c.assetIds ? c.amount > 0 : c.assetId !== assetId));
+      
+      filterCards();
+    }
+
     if (currentSellResults) {
       renderSellResultsTable(currentSellResults);
     }
@@ -504,7 +610,7 @@ export async function renderCardsInventory() {
         status === 'confirmed'
           ? `<span style="color: var(--color-success); font-weight: 600;">✓ Подтверждено</span>`
         : status === 'pending'
-          ? `<span style="color: var(--color-warning);">⏳ Ждёт подтверждения</span>`
+          ? `<span style="color: var(--color-warning);">${icons.loading} Ждёт подтверждения</span>`
         : status === 'sold'
           ? `<span style="color: var(--color-success);">✓ $${(r.soldPriceCents / 100).toFixed(2)}</span>`
           : `<span style="color: var(--color-danger);">✗ ${r.error}</span>`;
@@ -631,22 +737,25 @@ export async function renderCardsInventory() {
     `;
   };
 
-  const loadListings = async (page = 0) => {
+  const loadListings = async (page = 0, forceRefresh = false) => {
     listingsPage = page;
-    const start = page * listingsPerPage;
+    
+    // If we already have the full array and are just switching pages, paginate locally
+    if (!forceRefresh && currentListingsData && currentListingsData.allListings) {
+      listingsTotal = currentListingsData.allListings.length;
+      renderListings(currentListingsData);
+      return;
+    }
 
-    console.log(`[listings] Loading page ${page}, start=${start}, count=${listingsPerPage}`);
+    console.log(`[listings] Fetching all listings from backend...`);
 
     listingsView.innerHTML = '<div class="loading-state">Загрузка лотов...</div>';
-    const res = await window.electronAuth.marketGetListings({
-      start,
-      count: listingsPerPage
-    });
+    const res = await window.electronAuth.marketGetListings({ forceRefresh });
 
-    console.log(`[listings] Got ${res.listings?.length ?? 0} listings, total=${res.total ?? 0}`);
+    console.log(`[listings] Got ${res?.allListings?.length ?? 0} listings, total=${res?.total ?? 0}`);
 
     if (res && res.success) {
-      listingsTotal = res.total;
+      listingsTotal = res.allListings.length;
       renderListings(res);
     } else {
       listingsView.innerHTML = `<div class="error-state">Ошибка: ${res?.error || 'Неизвестная ошибка'}</div>`;
@@ -809,8 +918,10 @@ export async function renderCardsInventory() {
     } else {
       selectedListings.add(listingId);
     }
+    const start = listingsPage * listingsPerPage;
+    const paginated = (currentListingsData?.allListings ?? []).slice(start, start + listingsPerPage);
     const tbody = document.getElementById('listings-tbody');
-    if (tbody) tbody.innerHTML = renderListingsTable(currentListingsData.listings);
+    if (tbody) tbody.innerHTML = renderListingsTable(paginated);
     renderListingsBulkBar();
   };
 
@@ -824,6 +935,10 @@ export async function renderCardsInventory() {
         row.style.opacity = '0';
         setTimeout(() => row.remove(), 300);
       }
+      cacheInvalidate('wallet:balance');
+      const auth = store.get('auth');
+      if (auth?.steamId) cacheInvalidate(`inventory:cards:${auth.steamId}`);
+      loadCards(true); // Обновить инвентарь в фоне
     } else {
       if (row) row.style.opacity = '1';
       alert('Ошибка отмены: ' + (res?.error || 'Неизвестная ошибка'));
@@ -832,11 +947,16 @@ export async function renderCardsInventory() {
 
   const renderListings = (data) => {
     currentListingsData = data;
+    
+    // pagination slice
+    const start = listingsPage * listingsPerPage;
+    const paginatedListings = (data.allListings ?? []).slice(start, start + listingsPerPage);
+
     listingsView.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
         <h1 style="color: var(--color-text-primary); font-size: 20px; font-weight: 600; margin: 0;">
           Активные лоты
-          <span style="color: var(--color-text-secondary); font-size: 15px; font-weight: 400;"> · ${data.total} шт.</span>
+          <span style="color: var(--color-text-secondary); font-size: 15px; font-weight: 400;"> · ${data.allListings?.length ?? 0} шт.</span>
         </h1>
         <div class="listings-header-actions" style="display: flex; gap: 16px; align-items: center;">
           <span style="font-size: 12px; color: var(--color-text-secondary);">Итого: <span style="color: var(--color-text-primary);">${data.totalBuyer}</span></span>
@@ -858,7 +978,7 @@ export async function renderCardsInventory() {
             </tr>
           </thead>
           <tbody id="listings-tbody">
-            ${renderListingsTable(data.listings)}
+            ${renderListingsTable(paginatedListings)}
           </tbody>
         </table>
         ${renderPaginationControls()}
@@ -867,7 +987,7 @@ export async function renderCardsInventory() {
 
     renderListingsBulkBar();
 
-    listingsView.querySelector('#refresh-listings-btn').onclick = () => loadListings(0);
+    listingsView.querySelector('#refresh-listings-btn').onclick = () => loadListings(0, true);
     
     listingsView.querySelectorAll('.page-btn').forEach(btn => {
       btn.onclick = () => {
@@ -900,7 +1020,7 @@ export async function renderCardsInventory() {
       if (table) table.before(bar);
     }
 
-    const total = currentListingsData?.listings?.length ?? 0;
+    const total = currentListingsData?.allListings?.length ?? 0;
     const count = selectedListings.size;
 
     bar.innerHTML = `
@@ -909,15 +1029,17 @@ export async function renderCardsInventory() {
         padding:12px 16px;margin-bottom:12px;
         background:var(--color-bg-base);border:1px solid var(--color-border);border-radius:var(--radius-md);
       ">
-        <button onclick="window.selectAllListings()" class="btn-outline">
-          ${count === total ? 'Снять все' : `Выбрать все (${total})`}
-        </button>
-
-        <span style="color:var(--color-text-secondary);font-size:12px;flex:1;">
+        <span style="color:var(--color-text-secondary);font-size:12px;">
           ${count > 0
             ? `Выбрано: <span style="color:var(--color-text-primary);font-weight:600;">${count}</span>`
             : 'Нажмите на строку чтобы выбрать'}
         </span>
+
+        <button onclick="window.selectAllListings()" class="btn-outline">
+          ${count === total ? 'Снять все' : `Выбрать все (${total})`}
+        </button>
+
+        <div style="flex: 1;"></div>
 
         ${count > 0 ? `
           <button onclick="window.cancelSelectedListings()" class="btn-outline" style="
@@ -930,14 +1052,16 @@ export async function renderCardsInventory() {
   };
 
   window.selectAllListings = () => {
-    const all = currentListingsData?.listings ?? [];
+    const all = currentListingsData?.allListings ?? [];
     if (selectedListings.size === all.length) {
       selectedListings.clear();
     } else {
       all.forEach(l => selectedListings.add(l.listingId));
     }
+    const start = listingsPage * listingsPerPage;
+    const paginated = all.slice(start, start + listingsPerPage);
     const tbody = document.getElementById('listings-tbody');
-    if (tbody) tbody.innerHTML = renderListingsTable(currentListingsData.listings);
+    if (tbody) tbody.innerHTML = renderListingsTable(paginated);
     renderListingsBulkBar();
   };
 
@@ -971,7 +1095,13 @@ export async function renderCardsInventory() {
     listingSelectMode = false;
     selectedListings.clear();
     updateSelectBtn();
-    await loadListings(listingsPage);
+    await loadListings(listingsPage, true);
+    
+    // Обновить инвентарь в фоне, чтобы карточки вернулись
+    cacheInvalidate('wallet:balance');
+    const auth = store.get('auth');
+    if (auth?.steamId) cacheInvalidate(`inventory:cards:${auth.steamId}`);
+    loadCards(true);
   };
 
   tabInventory.onclick = () => switchTab('inventory');
@@ -1105,7 +1235,7 @@ export async function renderCardsInventory() {
           border:1px solid rgba(22, 83, 43, 0.5);background:var(--color-bg-surface);
           color:var(--color-text-secondary);font-size:14px;font-weight:600;
         ">
-          ⚡ Загружаю цены...
+          ${icons.lightning} Загружаю цены...
         </button>
       `;
       return;
@@ -1118,7 +1248,7 @@ export async function renderCardsInventory() {
           border:1px solid rgba(22, 83, 43, 0.5);background:var(--color-bg-surface);
           color:var(--color-text-secondary);font-size:14px;font-weight:600;opacity:0.5;
         ">
-          ⚡ Нет покупателей
+          ${icons.lightning} Нет покупателей
         </button>
       `;
       return;
@@ -1131,7 +1261,7 @@ export async function renderCardsInventory() {
         color:${selling ? 'var(--color-text-secondary)' : 'var(--color-accent-green)'};font-size:14px;font-weight:600;opacity:1;
         transition: all var(--transition-fast);
       ">
-        ⚡ Продать мгновенно · ${eligibleCount} карт · ~$${(totalCents/100).toFixed(2)}
+        ${icons.lightning} Продать мгновенно · ${eligibleCount} карт · ~$${(totalCents/100).toFixed(2)}
       </button>
     `;
 
@@ -1183,7 +1313,7 @@ export async function renderCardsInventory() {
         if (!selling) break;
         const card = cardsToSell[i];
 
-        if (btn) btn.textContent = `⚡ Продаю ${i+1}/${cardsToSell.length}...`;
+        if (btn) btn.innerHTML = `${icons.lightning} Продаю ${i+1}/${cardsToSell.length}...`;
 
         const result = await window.electronAuth.marketSellItem({
             assetId:   card.assetId,
@@ -1222,7 +1352,12 @@ export async function renderCardsInventory() {
     });
 
     updateUI();
-    loadCards(true);
+    cacheInvalidate('wallet:balance');
+    const auth = store.get('auth');
+    if (auth?.steamId) {
+      cacheInvalidate(`inventory:cards:${auth.steamId}`);
+      loadCards(true);
+    }
 
     const pendingIds = results
       .filter(r => r.status === 'success' && r.requiresConfirmation)
@@ -1300,48 +1435,68 @@ export async function renderCardsInventory() {
     const totalSelectedIds = rows.reduce((sum, r) => sum + r.count, 0);
     const instaBuyersCount = rows.reduce((sum, r) => sum + (r.hasBuyers ? r.count : 0), 0);
 
+    // ── Preserve scroll position and open/closed state before re-rendering ──
+    const existingDetails = summaryEl.querySelector('details');
+    const wasOpen = existingDetails ? existingDetails.open : true;
+    const scrollEl = summaryEl.querySelector('.summary-scroll-area');
+    const savedScrollTop = scrollEl ? scrollEl.scrollTop : 0;
+
     summaryEl.innerHTML = `
-      <div style="margin-bottom: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-bg-base);">
-        <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
-          <thead>
-            <tr style="background: var(--color-bg-surface); border-bottom: 1px solid var(--color-border);">
-              <th style="padding: 10px 14px; text-align: left; color: var(--color-text-secondary); font-weight: 500;">Карточка</th>
-              <th style="padding: 10px 14px; text-align: right; color: var(--color-text-secondary); font-weight: 500;">Мин. цена</th>
-              <th style="padding: 10px 14px; text-align: right; color: var(--color-text-secondary); font-weight: 500;">Ваша цена</th>
-              <th style="padding: 10px 14px; text-align: right; color: var(--color-text-secondary); font-weight: 500;">Вы получите</th>
-              <th style="padding: 10px 14px; text-align: right; color: var(--color-warning); font-weight: 500;">⚡ Инста</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows.map((row, i) => `
-              <tr style="background: ${i % 2 === 0 ? 'var(--color-bg-surface-light)' : 'var(--color-bg-surface)'}; border-bottom: 1px solid var(--color-border);">
-                <td style="padding: 8px 14px; color: var(--color-text-primary);">${row.name} ${row.count > 1 ? `<span style="color:var(--color-text-secondary);">×${row.count}</span>` : ''}</td>
-                <td style="padding: 8px 14px; text-align: right; color: var(--color-text-secondary);">${row.lowest}</td>
-                <td style="padding: 8px 14px; text-align: right; color: var(--color-text-primary);">${row.target}</td>
-                <td style="padding: 8px 14px; text-align: right; color: var(--color-success); font-weight: 600;">${row.seller}</td>
-                <td style="padding: 8px 14px; text-align: right;">${row.instaHtml}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-          <tfoot>
-            <tr style="background: var(--color-bg-surface); border-top: 1px solid var(--color-border);">
-              <td colspan="3" style="padding: 10px 14px; color: var(--color-text-secondary); font-size: 11px;">
-                Итого: ${totalSelectedIds} карточек
-                ${instaBuyersCount < totalSelectedIds
-                  ? `· <span style="color:var(--color-danger)">${totalSelectedIds - instaBuyersCount} без покупателей</span>`
-                  : ''}
-              </td>
-              <td style="padding: 10px 14px; text-align: right; color: var(--color-success); font-weight: 700; font-size: 13px;">
-                ~$${(totalRegularCents / 100).toFixed(2)}
-              </td>
-              <td style="padding: 10px 14px; text-align: right; color: var(--color-warning); font-weight: 700; font-size: 13px;">
-                ${totalInstaCents > 0 ? `~$${(totalInstaCents / 100).toFixed(2)}` : '—'}
-              </td>
-            </tr>
-          </tfoot>
-        </table>
+      <div style="margin-bottom: 16px;">
+        <details ${wasOpen ? 'open' : ''} id="price-summary-details">
+          <summary style="color: var(--color-text-primary); font-weight: 600; margin-bottom: 12px; font-size: 14px; cursor: pointer; user-select: none;">
+            Выбранные карточки
+          </summary>
+          <div style="border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-bg-base);">
+            <div class="summary-scroll-area" style="max-height: 300px; overflow-y: auto;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+                <thead style="position: sticky; top: 0; z-index: 2; background: var(--color-bg-surface); box-shadow: 0 1px 0 var(--color-border);">
+                  <tr>
+                    <th style="padding: 10px 14px; text-align: left; color: var(--color-text-secondary); font-weight: 500;">Карточка</th>
+                    <th style="padding: 10px 14px; text-align: right; color: var(--color-text-secondary); font-weight: 500;">Мин. цена</th>
+                    <th style="padding: 10px 14px; text-align: right; color: var(--color-text-secondary); font-weight: 500;">Ваша цена</th>
+                    <th style="padding: 10px 14px; text-align: right; color: var(--color-text-secondary); font-weight: 500;">Вы получите</th>
+                    <th style="padding: 10px 14px; text-align: right; color: var(--color-warning); font-weight: 500;">${icons.lightning} Инста</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${rows.map((row, i) => `
+                    <tr style="background: ${i % 2 === 0 ? 'var(--color-bg-surface-light)' : 'var(--color-bg-surface)'}; border-bottom: 1px solid var(--color-border);">
+                      <td style="padding: 8px 14px; color: var(--color-text-primary);">${row.name} ${row.count > 1 ? `<span style="color:var(--color-text-secondary);">×${row.count}</span>` : ''}</td>
+                      <td style="padding: 8px 14px; text-align: right; color: var(--color-text-secondary);">${row.lowest}</td>
+                      <td style="padding: 8px 14px; text-align: right; color: var(--color-text-primary);">${row.target}</td>
+                      <td style="padding: 8px 14px; text-align: right; color: var(--color-success); font-weight: 600;">${row.seller}</td>
+                      <td style="padding: 8px 14px; text-align: right;">${row.instaHtml}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </details>
+        <div style="
+          margin-top: 8px; padding: 10px 14px;
+          background: var(--color-bg-surface); border: 1px solid var(--color-border);
+          border-radius: var(--radius-md); display: flex; align-items: center; gap: 16px;
+          font-size: 12px;
+        ">
+          <span style="color: var(--color-text-secondary);">Итого: <span style="color:var(--color-text-primary);font-weight:600;">${totalSelectedIds}</span> карточек</span>
+          ${instaBuyersCount < totalSelectedIds
+            ? `<span style="color:var(--color-danger);">${totalSelectedIds - instaBuyersCount} без покупателей</span>`
+            : ''}
+          <span style="margin-left: auto; color: var(--color-success); font-weight: 700; font-size: 13px;">~$${(totalRegularCents / 100).toFixed(2)}</span>
+          ${totalInstaCents > 0
+            ? `<span style="color: var(--color-warning); font-weight: 700; font-size: 13px;">${icons.lightning} ~$${(totalInstaCents / 100).toFixed(2)}</span>`
+            : ''}
+        </div>
       </div>
     `;
+
+    // ── Restore scroll position ──
+    const newScrollEl = summaryEl.querySelector('.summary-scroll-area');
+    if (newScrollEl && savedScrollTop > 0) {
+      newScrollEl.scrollTop = savedScrollTop;
+    }
   };
 
   const updateUI = () => {
@@ -1372,14 +1527,14 @@ export async function renderCardsInventory() {
           renderInstaSellButton();
         }
       };
-      selectionPanel.appendChild(selectAllBtn);
-
       if (selected.size > 0) {
         const selCountSpan = document.createElement('span');
-        selCountSpan.style.cssText = 'color: var(--color-text-primary); font-size: 12px;';
+        selCountSpan.style.cssText = 'color: var(--color-text-primary); font-size: 12px; margin-right: 8px;';
         selCountSpan.textContent = `Выбрано: ${selected.size}`;
         selectionPanel.appendChild(selCountSpan);
       }
+
+      selectionPanel.appendChild(selectAllBtn);
     }
 
     function updateCardPrice(assetId, price) {
@@ -1477,26 +1632,63 @@ export async function renderCardsInventory() {
     }
 
     // Sell Results Panel
-    if (activeTab === 'inventory' && sellResults) {
+    if (activeTab === 'inventory' && (sellResults || pendingConfirmation.size > 0)) {
       sellResultsPanel.style.display = 'block';
       
-      const successCount = sellResults.filter(r => r.status === 'success').length;
+      if (!sellResults && pendingConfirmation.size > 0) {
+        // Reconstruct basic list if it was cleared
+        sellResults = [...pendingConfirmation].map(id => ({
+          assetId: id,
+          name: allCards.find(c => (c.assetIds || []).includes(id) || c.assetId === id)?.name || `Предмет ${id}`,
+          status: 'pending'
+        }));
+      }
+
+      if (sellResults) {
+        const successCount = sellResults.filter(r => r.status === 'success' || r.status === 'pending' || r.status === 'confirmed' || r.status === 'sold').length;
       
       sellResultsPanel.innerHTML = `
-        <div style="color: var(--color-text-primary); font-weight: 600; margin-bottom: 12px; font-size: 14px;">
-          Результаты продажи
-        </div>
-        <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px;">
-          <tbody id="sell-results-table">
-            <!-- Rendered by renderSellResultsTable -->
-          </tbody>
-        </table>
-        <div style="margin-top: 10px; font-size: 12px; color: var(--color-text-secondary);">
-          Успешно: ${successCount} / ${sellResults.length}
-        </div>
+        <details open style="position: relative;">
+          <summary style="color: var(--color-text-primary); font-weight: 600; margin-bottom: 12px; font-size: 14px; cursor: pointer; user-select: none; display: flex; justify-content: space-between; align-items: center;">
+            Результаты продажи
+            <button id="close-sell-results" style="
+              background: none; border: none; color: var(--color-text-secondary);
+              cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center;
+              transition: color var(--transition-fast);
+            " title="Закрыть">✕</button>
+          </summary>
+          <div style="max-height: 350px; overflow-y: auto; margin-bottom: 12px; padding-right: 6px;">
+            <table style="width: 100%; border-collapse: collapse;">
+              <tbody id="sell-results-table">
+                <!-- Rendered by renderSellResultsTable -->
+              </tbody>
+            </table>
+          </div>
+          <div style="font-size: 12px; color: var(--color-text-secondary);">
+            Успешно: ${successCount} / ${sellResults.length}
+          </div>
+        </details>
       `;
       renderSellResultsTable(sellResults);
-    } else {
+      
+      const closeBtn = sellResultsPanel.querySelector('#close-sell-results');
+      if (closeBtn) {
+        closeBtn.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          // Only clear if nothing is pending, otherwise just hide or keep state
+          if (pendingConfirmation.size === 0) {
+            sellResults = null;
+            sellResultStatuses = {};
+            currentSellResults = null;
+          }
+          sellResultsPanel.style.display = 'none';
+          updateUI();
+          renderAwaitingConfirmationTab();
+        };
+      }
+    }
+  } else {
       sellResultsPanel.style.display = 'none';
       sellResultsPanel.innerHTML = '';
     }
@@ -1573,7 +1765,7 @@ export async function renderCardsInventory() {
             font-size:11px;font-weight:700;
           ">×${card.amount}</div>
         ` : ''}
-        ${!card.tradable ? `<div class="card-badge-untradable">🔒</div>` : ''}
+        ${!card.tradable ? `<div class="card-badge-untradable">${icons.lock}</div>` : ''}
       `;
 
       el.addEventListener('click', () => {
@@ -1626,57 +1818,119 @@ export async function renderCardsInventory() {
     filterCards();
 
     const filtered = getFilteredCards();
-    const batchSize = 5;
-    for (let i = 0; i < filtered.length; i += batchSize) {
-      if (!selectMode) break; // User cancelled
-      const batch = filtered.slice(i, i + batchSize);
-      await Promise.all(batch.map(async (card) => {
-        if (priceCache[card.marketHashName]) return;
+    const uniqueHashes = [...new Set(filtered.map(c => c.marketHashName))];
+    const totalToLoad = uniqueHashes.filter(hash => !priceCache[hash]).length;
+    
+    if (totalToLoad === 0) return;
 
-        const result = await window.electronAuth.marketGetPrice({
-          marketHashName: card.marketHashName
+    const progressEl = document.getElementById('price-loading-progress');
+    if (progressEl) {
+      progressEl.style.display = 'flex';
+      progressEl.innerHTML = `
+        <div class="loading-spinner-small" style="width: 14px; height: 14px; border-width: 2px;"></div>
+        <span>Загрузка цен: 0 / ${totalToLoad}...</span>
+      `;
+    }
+
+    let loadedCount = 0;
+    
+    for (const hash of uniqueHashes) {
+      if (!selectMode) break;
+      if (priceCache[hash]) continue;
+
+      const card = filtered.find(c => c.marketHashName === hash);
+      
+      const result = await window.electronAuth.marketGetPrice({
+        marketHashName: hash
+      });
+
+      if (result && !result.error) {
+        priceCache[hash] = result;
+        loadedCount++;
+        
+        if (progressEl) {
+          progressEl.innerHTML = `
+            <div class="loading-spinner-small" style="width: 14px; height: 14px; border-width: 2px;"></div>
+            <span>Загрузка цен: ${loadedCount} / ${totalToLoad} · ${card.name}</span>
+          `;
+        }
+
+        // update all cards with this hash in UI
+        filtered.filter(c => c.marketHashName === hash).forEach(c => {
+          const el = document.getElementById(`price-${c.assetId}`);
+          if (el) el.textContent = result.lowestPrice ?? 'нет цены';
         });
 
-        if (result && !result.error) {
-          priceCache[card.marketHashName] = result;
-          // updateCardPrice function inside updateUI isn't accessible here, inline logic instead
-          const el = document.getElementById(`price-${card.assetId}`);
-          if (el) el.textContent = result.lowestPrice ?? 'нет цены';
-          renderPriceSummary();
+        renderPriceSummary();
+      } else {
+        // Even if error, count it as "processed" or just skip
+        loadedCount++;
+        if (progressEl) {
+          progressEl.innerHTML = `
+            <div class="loading-spinner-small" style="width: 14px; height: 14px; border-width: 2px;"></div>
+            <span>Загрузка цен: ${loadedCount} / ${totalToLoad}</span>
+          `;
         }
-      }));
-      await new Promise(r => setTimeout(r, 200));
+      }
+    }
+
+    if (progressEl) {
+      progressEl.style.display = 'none';
     }
   }
 
   const loadCards = async (forceRefresh = false) => {
     try {
-      if (forceRefresh) {
-        contentEl.innerHTML = '<div class="loading-state">Обновление карточек...</div>';
-      } else {
-        contentEl.innerHTML = '<div class="loading-state">Загрузка карточек...</div>';
-      }
-      if (countEl) countEl.textContent = '...';
-      
       const auth = store.get('auth');
       if (!auth || !auth.steamId) {
         contentEl.innerHTML = '<div class="error-state">Необходима авторизация Steam</div>';
         return;
       }
 
+      const cacheKey = `inventory:cards:${auth.steamId}`;
+
+      if (!forceRefresh) {
+        const cachedData = cacheGet(cacheKey, TTL.INVENTORY);
+        if (cachedData) {
+          // Кеш свежий — рендерим мгновенно, IPC не делаем совсем
+          allCards = cachedData;
+          filterCards();
+          updateUI();
+          updateSelectBtn();
+          return;
+        }
+      }
+
+      // Кеша нет или forceRefresh — показываем лоадер и идём в IPC
+      contentEl.innerHTML = forceRefresh
+        ? '<div class="loading-state">Обновление карточек...</div>'
+        : '<div class="loading-state">Загрузка карточек...</div>';
+
+      if (countEl) countEl.textContent = '...';
+      
       const res = await window.electronAuth.inventoryGetCards(auth.steamId, forceRefresh);
       
       if (res && res.success) {
         allCards = res.data || [];
+        cacheSet(cacheKey, allCards);
+        
         filterCards();
         updateUI();
         updateSelectBtn();
+
+        // Prefetch prices in background so they're cached when user enters select mode
+        const allHashNames = [...new Set(allCards.map(c => c.marketHashName).filter(Boolean))];
+        if (allHashNames.length > 0) {
+          window.electronAuth.prefetchPrices(allHashNames); // fire-and-forget
+        }
       } else {
         contentEl.innerHTML = `<div class="error-state">Ошибка: ${res?.error || 'Неизвестная ошибка'}</div>`;
       }
     } catch (e) {
       console.error('Failed to load cards:', e);
-      contentEl.innerHTML = `<div class="error-state">Ошибка загрузки: ${e.message}</div>`;
+      if (!allCards || allCards.length === 0) {
+        contentEl.innerHTML = `<div class="error-state">Ошибка загрузки: ${e.message}</div>`;
+      }
     }
   };
 
@@ -1725,13 +1979,22 @@ export async function renderCardsInventory() {
     sellResultStatuses = {};
     result.results.forEach(r => {
       if (r.status === 'success') {
-        sellResultStatuses[r.assetId] = r.requiresConfirmation ? 'pending' : 'sold';
+        const status = r.requiresConfirmation ? 'pending' : 'sold';
+        sellResultStatuses[r.assetId] = status;
+        
+        // If sold instantly, trigger local removal logic
+        if (status === 'sold') {
+          updateSellResultStatus(r.assetId, 'sold');
+        }
       } else {
         sellResultStatuses[r.assetId] = 'error';
       }
     });
 
     updateUI();
+    cacheInvalidate('wallet:balance');
+    const auth = store.get('auth');
+    if (auth?.steamId) cacheInvalidate(`inventory:cards:${auth.steamId}`);
     loadCards(true);
 
     // Собрать assetId которые требуют подтверждения
@@ -1891,7 +2154,7 @@ export async function renderCardsInventory() {
             border-radius:var(--radius-md);
           ">
             <div style="font-size:12px;color:var(--color-accent-green);font-weight:600;margin-bottom:8px;">
-              ⚡ Инста-продажа доступна
+              ${icons.lightning} Инста-продажа доступна
             </div>
             <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:12px;">
               ${buyCount} покупателей готовы купить по
@@ -1961,7 +2224,7 @@ export async function renderCardsInventory() {
                 color:var(--color-accent-green);font-size:13px;font-weight:600;
                 transition: all var(--transition-fast);
               ">
-              ⚡ Продать мгновенно · $${(highestBuy/100).toFixed(2)}
+              ${icons.lightning} Продать мгновенно · $${(highestBuy/100).toFixed(2)}
             </button>
           </div>
         `;
@@ -2067,6 +2330,9 @@ export async function renderCardsInventory() {
 
       setTimeout(() => {
         closeModal();
+        cacheInvalidate('wallet:balance');
+        const auth = store.get('auth');
+        if (auth?.steamId) cacheInvalidate(`inventory:cards:${auth.steamId}`);
         loadCards(true);
       }, 2000);
     };
@@ -2142,6 +2408,9 @@ export async function renderCardsInventory() {
           sellBtn.style.color = '#22c55e';
           sellBtn.textContent = '✓';
           setTimeout(() => closeModal(), 1000);
+          cacheInvalidate('wallet:balance');
+          const auth = store.get('auth');
+          if (auth?.steamId) cacheInvalidate(`inventory:cards:${auth.steamId}`);
           loadCards(true);
         } else {
           sellBtn.disabled = false;
@@ -2159,6 +2428,37 @@ export async function renderCardsInventory() {
   loadCards();
   updateUI();
   updateSelectBtn();
+
+  // ── Auto-refresh inventory when farming drops new cards ──
+  let _lastFarmTotalRemaining = null;
+  const _unsubFarm = store.subscribe('autoFarmStatus', (status) => {
+    if (!status || !status.isActive) return;
+    const currentRemaining = status.totalRemaining ?? null;
+    if (_lastFarmTotalRemaining !== null && currentRemaining !== null && currentRemaining < _lastFarmTotalRemaining) {
+      // A card dropped — silently refresh inventory without resetting UI state
+      const auth = store.get('auth');
+      if (auth?.steamId) {
+        window.electronAuth.inventoryGetCards(auth.steamId, true).then(res => {
+          if (res && res.success) {
+            const { cacheSet, TTL } = window.__pageCache || {};
+            // Update allCards and re-render without disturbing select mode
+            allCards = res.data || [];
+            // Persist in renderer-side cache if available
+            try { cacheSet?.(`inventory:cards:${auth.steamId}`, allCards); } catch(_) {}
+            filterCards();
+          }
+        }).catch(console.error);
+      }
+    }
+    _lastFarmTotalRemaining = currentRemaining;
+  });
+
+  // Expose cacheSet for the subscription above (thin wrapper so it works without import)
+  if (!window.__pageCache) {
+    import('../cache/pageCache.js').then(m => {
+      window.__pageCache = { cacheSet: m.cacheSet, TTL: m.TTL };
+    }).catch(() => {});
+  }
 
   return container;
 }

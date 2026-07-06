@@ -29,3 +29,15 @@ try {
   console.error(`Failed to initialize Steamworks for AppID ${appId}:`, error);
   process.exit(1);
 }
+
+// IPC shutdown logic
+process.on('message', (msg) => {
+  if (msg && msg.cmd === 'stop') {
+    process.exit(0);
+  }
+});
+
+// На случай если родитель умер
+process.on('disconnect', () => {
+  process.exit(0);
+});

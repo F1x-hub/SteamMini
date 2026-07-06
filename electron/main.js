@@ -1,4 +1,25 @@
-import { app, BrowserWindow, ipcMain, session, shell, Tray, Menu, nativeImage } from 'electron';
+// Load .env in development; in production .env is bundled into extraResources
+// Must use createRequire since this file is ESM ("type": "module")
+import { createRequire as _dotenvRequire } from 'module';
+
+{
+  const _req = _dotenvRequire(import.meta.url);
+  const _dotenv = _req('dotenv');
+  const _nodePath = _req('path');
+  // app.isPackaged is the canonical way to detect production in Electron
+  const _electronApp = _req('electron').app;
+  if (_electronApp.isPackaged) {
+    // In production, .env resides in extraResources (next to the app)
+    _dotenv.config({ path: _nodePath.join(process.resourcesPath, '.env') });
+  } else {
+    _dotenv.config(); // loads .env from project root in development
+  }
+}
+
+import { initLogger } from './logger.js';
+initLogger();
+
+import { app, BrowserWindow, ipcMain, net, session, shell, Tray, Menu, nativeImage } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -6,7 +27,10 @@ import * as idleManager from './idleManager.js';
 import achievementBridge from './achievementBridge.js';
 import cardsBridge from './cardsBridge.js';
 import { getLocalConfigPathExported } from './recentGames.js';
-import { refreshSteamCookies, httpsGet } from './utils/helpers.js';
+import { refreshSteamCookies, steamFetchWithRetry, httpsGet } from './utils/helpers.js';
+import { ensureSteamSession, setupAutoRefresh } from './auth/silentRefresh.js';
+import { registerHltbHandlers } from './ipc/hltb.js';
+import { registerBacklogCacheHandlers } from './ipc/backlogCache.js';
 
 // IPC Modules
 import { register as registerInventory }    from './ipc/inventory.js';
@@ -19,11 +43,32 @@ import { register as registerAchievements } from './ipc/achievements.js';
 import { register as registerIdle }         from './ipc/idle.js';
 import { register as registerStats }        from './ipc/stats.js';
 import { register as registerFreeGames, startFreeGamesPolling } from './ipc/freeGames.js';
+import { registerReportIpc } from './ipc/report.js';
+import { register as registerBackup } from './ipc/backup.js';
 
 // CommonJS module require (because of "type": "module" in package.json)
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { setupAutoUpdater } = require('./updater.cjs');
+
+let playtimeRefreshInterval = null;
+
+function startPlaytimeRefresh() {
+  if (playtimeRefreshInterval) return;
+  playtimeRefreshInterval = setInterval(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('farm:refresh-playtime');
+    }
+  }, 5 * 60 * 1000); // 5 minutes
+}
+
+function stopPlaytimeRefresh() {
+  if (playtimeRefreshInterval) {
+    clearInterval(playtimeRefreshInterval);
+    playtimeRefreshInterval = null;
+  }
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -48,6 +93,7 @@ let mainWindow;
 function createWindow() {
   mainWindow = new BrowserWindow({
     show: false,
+    icon: path.join(__dirname, '..', 'resources', 'icon.png'),
     backgroundColor: '#0d0d0d',
     width: 1280,
     height: 800,
@@ -75,8 +121,22 @@ function createWindow() {
     console.error('[Main] Failed to load:', code, desc, url);
   });
 
-  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
-    if (level >= 2) console.error(`[Renderer] ${message} (${sourceId}:${line})`);
+  mainWindow.webContents.on('console-message', (event, secondArg, thirdArg, fourthArg, fifthArg) => {
+    // Electron 25+: secondArg is a details object { level, message, line, sourceId }
+    // Electron <25 (old):   secondArg=level(int), thirdArg=message, fourthArg=line, fifthArg=sourceId
+    let level, message, line, sourceId;
+    if (secondArg !== null && typeof secondArg === 'object' && 'message' in secondArg) {
+      ({ level, message, line, sourceId } = secondArg);
+    } else {
+      level = secondArg;
+      message = thirdArg;
+      line = fourthArg;
+      sourceId = fifthArg;
+    }
+    if (message == null || message === '') return; // skip empty frames
+    const labels = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+    const lv = labels[level] ?? 'LOG';
+    console.log(`[Renderer] [${lv}] ${message}`);
   });
 
   // Clear CSP if it blocks webview
@@ -96,7 +156,7 @@ function createWindow() {
 
   // Intercept new-window / target="_blank" → open internal browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('steam://')) {
+    if (url.startsWith('steam://') || url.includes('gg.deals')) {
       shell.openExternal(url);
       return { action: 'deny' };
     }
@@ -109,7 +169,7 @@ function createWindow() {
     const appUrl = isDev ? 'http://localhost:3000' : `file://`;
     if (!url.startsWith(appUrl)) {
       event.preventDefault();
-      if (url.startsWith('steam://')) {
+      if (url.startsWith('steam://') || url.includes('gg.deals')) {
         shell.openExternal(url);
       } else {
         mainWindow.webContents.send('open-internal-browser', url);
@@ -143,8 +203,49 @@ registerCards(ipcMain);
 registerAchievements(ipcMain);
 registerIdle(ipcMain);
 registerStats(ipcMain);
+registerReportIpc();
+registerBackup(ipcMain);
+registerHltbHandlers();
+registerBacklogCacheHandlers();
+
+ipcMain.handle('farm:start-playtime-refresh', () => startPlaytimeRefresh());
+ipcMain.handle('farm:stop-playtime-refresh', () => stopPlaytimeRefresh());
+
+
+
 
 // ──────────────── App Lifecycle ────────────────
+
+// ──────────────── Web Contents Lifecycle (Webviews) ────────────────
+app.on('web-contents-created', (event, contents) => {
+  if (contents.getType() === 'webview') {
+    // ─── Browser behavior ───
+    contents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith('steam://') || url.includes('gg.deals')) {
+        shell.openExternal(url);
+        return { action: 'deny' };
+      }
+      contents.loadURL(url);
+      return { action: 'deny' };
+    });
+
+    // ─── Error/Console logging for webviews ───
+    contents.on('did-fail-load', (ev, code, desc, url) => {
+      console.error(`[Webview] Failed to load: ${url} (${code}: ${desc})`);
+    });
+
+    contents.on('console-message', (ev, level, message, line, sourceId) => {
+      // level 2 = Warning, 3 = Error
+      if (level >= 2) {
+        console.warn(`[Webview] ${message} (${sourceId}:${line})`);
+      }
+    });
+
+    contents.on('render-process-gone', (ev, details) => {
+      console.error(`[Webview] Process gone: ${details.reason}`);
+    });
+  }
+});
 
 // ──────────────── Single Instance Lock ────────────────
 const gotTheLock = app.requestSingleInstanceLock();
@@ -164,7 +265,7 @@ if (!gotTheLock) {
     registerAuth(ipcMain, { mainWindow });
 
     // Setup Tray
-    const iconPath = path.join(__dirname, '..', 'assets', 'icon.ico');
+    const iconPath = path.join(__dirname, '..', 'resources', 'icon.png');
     const icon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
     tray = new Tray(icon);
     tray.setToolTip('SteamMini');
@@ -183,14 +284,14 @@ if (!gotTheLock) {
     // Register modules that need mainWindow
   registerSteam(ipcMain, { mainWindow });
   registerWindow(ipcMain, { mainWindow });
-  registerFreeGames(ipcMain);
+  registerFreeGames(ipcMain, { mainWindow });
 
   // IPC for app version
   ipcMain.handle('app:get-version', () => app.getVersion());
 
   ipcMain.handle('badge:get-game-badge', async (event, { steamId, appId }) => {
     try {
-      const STEAM_API_KEY = '08FB1451659E540949A6AF2A3F5D99E5'
+      const STEAM_API_KEY = process.env.STEAM_API_KEY;
       const data = await httpsGet({ hostname: 'api.steampowered.com', path: `/IPlayerService/GetBadges/v1/?key=${STEAM_API_KEY}&steamid=${steamId}` })
       const json = JSON.parse(data.body)
       const badges = json?.response?.badges ?? []
@@ -204,7 +305,7 @@ if (!gotTheLock) {
       const xp = badge.xp ?? 0
 
       // Получаем реальный iconurl через внутренний API с куками
-      const badgeInfoResp = await session.defaultSession.fetch(
+      const badgeInfoResp = await steamFetchWithRetry(
         `https://steamcommunity.com/profiles/${steamId}/ajaxgetbadgeinfo/${appId}`,
         { headers: { 'Accept': 'application/json' } }
       )
@@ -215,7 +316,7 @@ if (!gotTheLock) {
       let badgeName = null
       try {
         console.log(`[badge] Fetching real name from: https://steamcommunity.com/profiles/${steamId}/gamecards/${appId}?l=english`)
-        const pageResp = await session.defaultSession.fetch(
+        const pageResp = await steamFetchWithRetry(
           `https://steamcommunity.com/profiles/${steamId}/gamecards/${appId}?l=english`
         )
         const html = await pageResp.text()
@@ -251,11 +352,37 @@ if (!gotTheLock) {
   // Auto-updater only in packaged app
   if (app.isPackaged) {
     setupAutoUpdater(mainWindow);
+  } else {
+    ipcMain.handle('update:check', async () => ({ status: 'not-available', message: 'Недоступно в режиме разработки' }));
+    ipcMain.handle('update:download', () => {});
+    ipcMain.handle('update:install', () => {});
+    ipcMain.handle('update:set-auto-download', (event, enabled) => {
+      console.log('[Dev] autoDownload ignored in dev:', enabled);
+    });
   }
 
-  // Refresh Steam cookies on startup
-  await refreshSteamCookies();
-  console.log('[App] Steam cookies refreshed');
+  // Silent refresh: check JWT expiry and refresh if needed
+  console.log('[App] Checking Steam session before startup...');
+  const sessionOk = await ensureSteamSession(session.defaultSession);
+  console.log(`[App] Session check: ${sessionOk ? '[OK] OK' : '[WARN] Failed — will need manual login'}`);
+
+  // Proactive auto-refresh every hour
+  setupAutoRefresh(session.defaultSession, 1);
+
+  // Network Error Monitoring (captures image 404s, etc.)
+  session.defaultSession.webRequest.onErrorOccurred((details) => {
+    const silentTypes = ['image', 'script', 'stylesheet', 'xhr', 'fetch'];
+    if (silentTypes.includes(details.resourceType)) {
+      console.warn(`[Network] Failed to load ${details.url}: ${details.error}`);
+    }
+  });
+
+  // Capture HTTP errors (404s, 500s) that are successful network transfers but failed status codes
+  session.defaultSession.webRequest.onCompleted((details) => {
+    if (details.statusCode >= 400) {
+      console.error(`[Network] Failed to load resource: the server responded with a status of ${details.statusCode} (${details.url})`);
+    }
+  });
 
   cardsBridge.start();
 

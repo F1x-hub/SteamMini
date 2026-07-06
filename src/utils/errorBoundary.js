@@ -1,3 +1,4 @@
+import { icons } from './icons.js';
 import router from '../router/index.js';
 
 /**
@@ -20,7 +21,7 @@ function createOverlay(error, source) {
   overlayEl.innerHTML = `
     <div class="eb-backdrop"></div>
     <div class="eb-card">
-      <div class="eb-icon">⚠️</div>
+      <div class="eb-icon">${icons.warning}</div>
       <h2 class="eb-title">Что-то пошло не так</h2>
       <p class="eb-source">${escapeHtml(source)}</p>
       <pre class="eb-message">${escapeHtml(error?.message || String(error))}</pre>
@@ -181,23 +182,59 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// ─── Renderer Logger ─────────────────────────────────────────────
+
+function initRendererLogger() {
+  if (window.electronAuth && typeof window.electronAuth.log === 'function') {
+    const levels = ['log', 'info', 'warn', 'error'];
+    levels.forEach(level => {
+      const original = console[level];
+      console[level] = (...args) => {
+        original.apply(console, args);
+        try {
+          window.electronAuth.log(level, ...args);
+        } catch (e) {}
+      };
+    });
+    console.log('[ErrorBoundary] Full console mirroring initialized');
+  }
+}
+
 // ─── Handler ──────────────────────────────────────────────────────
 
-function handleError(error, source = 'Unknown') {
+function handleError(error, source = 'Unknown', silent = false) {
   errorCount++;
-  console.error(`[ErrorBoundary] #${errorCount} (${source}):`, error);
-  createOverlay(error, source);
+  const message = error?.message || String(error);
+  
+  // If we are NOT silent, we already log via the console.error override (if initialized)
+  // But for safety and clarity in the main process log:
+  if (window.electronAuth && typeof window.electronAuth.log === 'function') {
+    window.electronAuth.log('error', `[ErrorBoundary] #${errorCount} (${source}): ${message}`);
+  } else {
+    console.error(`[ErrorBoundary] #${errorCount} (${source}):`, error);
+  }
+
+  if (!silent) {
+    createOverlay(error, source);
+  }
 }
 
 // ─── Init ─────────────────────────────────────────────────────────
 
 export function initErrorBoundary() {
+  initRendererLogger();
+
   window.addEventListener('error', (event) => {
-    // Ignore resource loading errors (images, scripts, etc.)
-    if (event.target && event.target !== window) return;
+    // Handle resource loading errors (images, scripts, etc.)
+    if (event.target && event.target !== window) {
+      const url = event.target.src || event.target.href || 'unknown URL';
+      // Match the native browser message format for clarity
+      handleError(`Failed to load resource: the server responded with a status of 404 () [${url}]`, 'Resource Load Failure', true);
+      return;
+    }
     
     handleError(event.error || event.message, `Uncaught Error @ ${event.filename}:${event.lineno}`);
-  });
+  }, true); // useCapture = true to catch resource errors
 
   window.addEventListener('unhandledrejection', (event) => {
     const reason = event.reason;

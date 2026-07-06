@@ -1,5 +1,9 @@
 import './styles/variables.css';
 import './styles/global.css';
+import './styles/skeleton.css';
+import './styles/freeGames.css';
+import './styles/updaterNotification.css';
+import './styles/userPopup.css';
 
 import store from './store/index.js';
 import router from './router/index.js';
@@ -12,6 +16,7 @@ import { initContextMenu } from './components/contextMenu.js';
 import { initInternalBrowser } from './components/internalBrowser.js';
 import { initUpdaterNotification } from './components/updaterNotification.js';
 import { initErrorBoundary } from './utils/errorBoundary.js';
+import { initFarmingIndicator } from './components/farmingIndicator.js';
 
 import { renderLibrary } from './pages/library.js';
 import { renderWishlist } from './pages/wishlist.js';
@@ -19,9 +24,38 @@ import { renderLogin } from './pages/login.js';
 import { renderGameDetail } from './pages/gameDetail.js';
 import { renderCardsInventory } from './pages/cardsInventory.js';
 import { renderFreeGames } from './pages/freeGames.js';
+import { renderBacklog } from './pages/backlog.js';
 import autoFarm from './utils/autoFarm.js';
+import { startBackgroundPriceFetcher } from './utils/backgroundPrices.js';
 
 import steamApi from './api/steam.js';
+import logger from './utils/logger.js';
+
+// ── Capture and store the stable absolute URL of index.html for later redirects ──
+(function captureBaseUrl() {
+  const currentHref = window.location.href.split('#')[0].split('?')[0];
+  // If we are on index.html (first boot), save it to localStorage.
+  // We only do this if it contains 'index.html' to avoid saving a mangled virtual path.
+  if (currentHref.includes('index.html')) {
+    localStorage.setItem('app_base_url', currentHref);
+    logger.info('[Init] Saved stable base URL:', currentHref);
+  } else if (window.location.protocol !== 'file:') {
+    // On localhost, the root is always stable
+    const stableRoot = window.location.origin + '/';
+    localStorage.setItem('app_base_url', stableRoot);
+    logger.info('[Init] Saved stable localhost base URL:', stableRoot);
+  }
+})();
+
+// ── Global Error Catchers for persistent logging ──
+window.onerror = (message, source, lineno, colno, error) => {
+  logger.error(`[Global Error] ${message}`, { source, lineno, colno, error: error?.stack });
+};
+window.onunhandledrejection = (event) => {
+  logger.error(`[Unhandled Rejection] ${event.reason}`);
+};
+
+
 
 function showSplash() {
   const splash = document.createElement('div');
@@ -56,7 +90,9 @@ async function preloadInitialData() {
 }
 
 async function main() {
+  logger.info('[Main] Initializing application...');
   initErrorBoundary();
+
   const app = document.getElementById('app');
   
   const splash = showSplash();
@@ -72,10 +108,20 @@ async function main() {
   await store.initAuth();
   if (bar) bar.style.width = '30%';
 
+  const userPopup = createUserPopup();
+  document.body.appendChild(userPopup);
+
   if (!store.get('isAuthenticated')) {
     hideSplash(splash);
     app.innerHTML = '';
-    app.appendChild(renderLogin());
+    
+    // Add custom titlebar to login screen as well
+    const titlebar = createTitlebar();
+    app.appendChild(titlebar);
+    
+    const loginEl = renderLogin();
+    app.appendChild(loginEl);
+    
     if (window.electronAuth && window.electronAuth.appReady) {
       window.electronAuth.appReady();
     }
@@ -87,6 +133,7 @@ async function main() {
     preloadInitialData(),
     store.fetchUserProfile()
   ]);
+  startBackgroundPriceFetcher();
   if (bar) bar.style.width = '60%';
 
   // Create layout
@@ -98,14 +145,18 @@ async function main() {
   mainContent.style.position = 'relative';
   mainContent.style.overflowY = 'auto'; // allow inner scroll
 
-  const userPopup = createUserPopup();
-  document.body.appendChild(userPopup);
-  
   const profilePopup = createProfilePopup();
   document.body.appendChild(profilePopup);
 
   app.appendChild(titlebar);
   app.appendChild(topNav);
+
+
+
+
+
+
+
   app.appendChild(mainContent);
 
   // Listen for route changes in store and router
@@ -136,9 +187,10 @@ async function main() {
   router.add('/cards-inventory', renderCardsInventory);
   router.add('/wishlist', renderWishlist);
   router.add('/free-games', renderFreeGames);
+  router.add('/backlog', renderBacklog);
   router.add(/^\/game\/(.+)$/, (appId) => {
     // Reset previousRoute if it's not a valid origin (e.g. refresh)
-    const validOrigins = ['/library', '/cards-inventory', '/wishlist', '/free-games'];
+    const validOrigins = ['/library', '/cards-inventory', '/wishlist', '/free-games', '/backlog'];
     const prev = store.get('previousRoute');
     if (!validOrigins.includes(prev)) {
       store.set('previousRoute', null);
@@ -178,17 +230,7 @@ async function main() {
     document.documentElement.setAttribute('data-theme', themeMode);
   });
 
-  // Global context menu for input fields
-  document.addEventListener('contextmenu', (e) => {
-    const el = e.target;
-    const isInput = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
-    if (!isInput) return;
 
-    e.preventDefault();
-    if (window.electronAuth && window.electronAuth.showInputContextMenu) {
-      window.electronAuth.showInputContextMenu();
-    }
-  });
   
   // Clean up idle games on close
   window.addEventListener('beforeunload', () => {
